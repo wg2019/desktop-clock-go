@@ -9,7 +9,11 @@ import (
 )
 
 const (
-	className   = "DesktopClockWin32"
+	// className 是窗口类的注册名，仅在本进程内标识窗口，不对外暴露。
+	// 刻意不带 "32"/"64" 字样：本程序调用的是 Win32 API —— 那是 Windows
+	// 原生接口家族的名字（user32/gdi32 里的 "32" 是 16→32 位年代的遗留），
+	// 64 位程序用的是同一套 API，与编译目标位数无关。
+	className   = "DesktopClockWindow"
 	windowTitle = "DesktopClock"
 
 	// 透明色键：窗口背景用这个颜色填充，配合 LWA_COLORKEY 让该色变全透明。
@@ -17,8 +21,8 @@ const (
 	keyR, keyG, keyB = 1, 1, 1
 )
 
-// Clock 持有全部运行期状态。单实例，放在包级变量 app 里供窗口过程访问
-// （Win32 窗口过程是 C 回调，拿不到 Go 的闭包环境）。
+// Clock 持有全部运行期状态。单实例，由包级变量 app 引用
+// （原因见 main.go：窗口过程拿不到 Go 的闭包）。
 type Clock struct {
 	cfg    *Config
 	hwnd   uintptr
@@ -35,7 +39,12 @@ type Clock struct {
 	custColors [16]uint32
 }
 
-func newClock() (*Clock, error) {
+// newClock 构造并启动时钟窗口，只返回成败。
+//
+// 实例在内部挂到包级 app 上，不通过返回值暴露：窗口过程是 C 回调、拿不到闭包，
+// 本来就必须走 app；而且这一步要在 CreateWindowExW 之前完成，否则首条窗口消息
+// 进来时 wndProc 里 app 还是 nil。
+func newClock() error {
 	cfg := loadConfig()
 	cfg.Autostart = getAutostart() // 以注册表实际状态为准
 
@@ -46,17 +55,14 @@ func newClock() (*Clock, error) {
 		h:     60,
 	}
 	c.hbrush, _, _ = pCreateSolidBrush.Call(uintptr(toColorRef(keyR, keyG, keyB)))
-
-	// 必须在这里就把实例挂到全局：CreateWindowExW 一返回就可能收到
-	// WM_WINDOWPOSCHANGING 等消息，那时 wndProc 里要靠 app 找到实例。
 	app = c
 
 	if err := c.registerClass(); err != nil {
-		return nil, err
+		return err
 	}
 	c.createFont()
 	if err := c.createWindow(); err != nil {
-		return nil, err
+		return err
 	}
 	c.resizeToText()
 
@@ -69,7 +75,7 @@ func newClock() (*Clock, error) {
 	c.setupTray()
 	pSetTimer.Call(c.hwnd, 1, 1000, 0) // 每秒一次：刷新时间 + 自检层级
 
-	return c, nil
+	return nil
 }
 
 // ---------- 图标 ----------
@@ -162,9 +168,9 @@ func (c *Clock) createFont() {
 	}
 	var lf LOGFONTW
 	lf.LfHeight = -int32(c.cfg.FontSize) // 负值 = 字符高度（不含内部行距）
-	lf.LfWeight = 400
+	lf.LfWeight = 400                    // 400 = FW_NORMAL
 	if c.cfg.FontWeight == "bold" {
-		lf.LfWeight = 700
+		lf.LfWeight = 700 // 700 = FW_BOLD
 	}
 	if c.cfg.Italic {
 		lf.LfItalic = 1
@@ -181,6 +187,7 @@ func (c *Clock) createFont() {
 // 这样换字体 / 切 12 小时制（多了"上午"两字）都不会截断。
 func (c *Clock) resizeToText() {
 	text := c.timeStr()
+	// 借窗口 DC 选入当前字体，才能量到"这个字体下"的文字尺寸
 	hdc, _, _ := pGetDC.Call(c.hwnd)
 	pSelectObject.Call(hdc, c.hfont)
 
@@ -191,6 +198,7 @@ func (c *Clock) resizeToText() {
 		uintptr(unsafe.Pointer(&sz)))
 	pReleaseDC.Call(c.hwnd, hdc)
 
+	// 留白：GetTextExtent 不含字形外沿的抗锯齿像素，不加会把数字边缘裁掉
 	c.w = int(sz.Cx) + 16
 	c.h = int(sz.Cy) + 10
 	pSetWindowPos.Call(c.hwnd, 0,
@@ -280,6 +288,10 @@ func (c *Clock) anchorZ() {
 	}
 }
 
+// applyLayer 按当前配置重设扩展样式并重新落位。
+//
+// 改完扩展样式必须再调一次 SetWindowPos：SetWindowLongPtrW 只改属性值，
+// 系统不会因此重排 z 序，样式要等下一次位置变更才真正生效。
 func (c *Clock) applyLayer() {
 	pSetWindowLongPtrW.Call(c.hwnd, negPtr(GWL_EXSTYLE), c.exStyle())
 	if c.cfg.DesktopLayer {
@@ -341,13 +353,9 @@ func (c *Clock) onWindowPosChanging(lparam uintptr) uintptr {
 	if anchor == 0 {
 		return 0
 	}
-	// 这里的 uintptr -> unsafe.Pointer 转换是 Win32 消息回调的固有写法，
-	// 也是 go vet 唯一会提示的地方（unsafeptr 检查无法分辨来源）：
-	//   · lparam 由系统在 DispatchMessage 时填入，指向系统栈/堆上的 WINDOWPOS，
-	//     不是 Go 分配的堆对象，因此不受 Go 栈增长与 GC 搬移影响；
-	//   · 指针不逃逸，只在本次回调内读写，返回后即失效。
-	// 换成任何等价写法（unsafe.Add、unsafe.Slice）都仍需要同一次转换，
-	// vet 照样会报，所以保留原样并在此说明。
+	// lparam 由系统在 DispatchMessage 时填入，指向系统内存里的 WINDOWPOS，
+	// 不是 Go 堆对象、不逃逸、只在本次回调内有效，因此这个转换是安全的。
+	// 但 go vet 的 unsafeptr 检查无法分辨来源，会恒定报一条——见 README 说明。
 	wp := (*WINDOWPOS)(unsafe.Pointer(lparam))
 	wp.HwndInsertAfter = anchor
 	wp.Flags &^= SWP_NOZORDER // 清掉 NOZORDER，否则改写不生效
@@ -366,6 +374,8 @@ func (c *Clock) onLButtonDown() {
 	pGetCursorPos.Call(uintptr(unsafe.Pointer(&pt)))
 	var rc RECT
 	pGetWindowRect.Call(c.hwnd, uintptr(unsafe.Pointer(&rc)))
+	// 记下光标相对窗口左上角的偏移。拖动时保持这个偏移不变，
+	// 否则窗口会瞬间跳到光标位置、跟手感全无。
 	c.dragOffX = int(pt.X) - int(rc.Left)
 	c.dragOffY = int(pt.Y) - int(rc.Top)
 
@@ -381,6 +391,7 @@ func (c *Clock) onMouseMove() {
 	x := int(pt.X) - c.dragOffX
 	y := int(pt.Y) - c.dragOffY
 
+	// 最后一个参数 1 = 立即重绘，否则拖动过程中会留下拖影
 	pMoveWindow.Call(c.hwnd, uintptr(x), uintptr(y), uintptr(c.w), uintptr(c.h), 1)
 	c.cfg.X = x
 	c.cfg.Y = y

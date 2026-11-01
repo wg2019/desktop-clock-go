@@ -17,7 +17,7 @@ type Config struct {
 	HourFormat   string `json:"hour_format"` // "24" | "12"
 	Color        string `json:"color"`       // "#RRGGBB"
 	FontFamily   string `json:"font_family"` // 字体名
-	FontSize     int    `json:"font_size"`   // 逻辑字号（pt）
+	FontSize     int    `json:"font_size"`   // 字符高度（像素）
 	FontWeight   string `json:"font_weight"` // "bold" | "normal"
 	Italic       bool   `json:"italic"`      // 斜体
 	X            int    `json:"x"`           // 窗口左上角
@@ -56,9 +56,10 @@ func defaultConfig() *Config {
 
 // exePath 返回程序真实磁盘路径。
 //
-// Go 编译出的是真正的单文件 exe，不存在 PyInstaller --onefile 那种
-// "运行时解压到 %TEMP%\_MEIxxxx、退出即删除" 的问题，所以 os.Executable()
-// 直接就是稳定路径，配置和自启都不会指向临时目录。
+// 必须是磁盘上的真实路径，不能是临时目录：配置和开机自启项都要写在这里，
+// 路径一旦落在 %TEMP% 下，重启后就会指向一个已被删除的文件。
+// os.Executable() 对静态链接的 Go 程序直接返回 exe 自身路径，天然满足；
+// 再解一次符号链接，防止从快捷方式/软链启动时拿到的是链接路径。
 func exePath() string {
 	p, err := os.Executable()
 	if err != nil {
@@ -97,6 +98,8 @@ func saveConfig(cfg *Config) error {
 
 // ---------- 开机自启（HKCU\...\Run） ----------
 
+// getAutostart 只判断自启项是否存在，不比对它的值。
+// RegQueryValueExW 的 lpData 传 NULL、只给 &size，系统就只回填长度不拷贝数据。
 func getAutostart() bool {
 	var hKey uintptr
 	ret, _, _ := pRegOpenKeyExW.Call(

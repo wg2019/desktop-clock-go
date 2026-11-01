@@ -28,19 +28,19 @@ var (
 // ---------- 过程 ----------
 var (
 	// kernel32
-	pGetModuleHandleW   = kernel32.NewProc("GetModuleHandleW")
-	pGetModuleFileNameW = kernel32.NewProc("GetModuleFileNameW")
+	pGetModuleHandleW = kernel32.NewProc("GetModuleHandleW")
+	pCreateMutexW     = kernel32.NewProc("CreateMutexW")
 
 	// user32 — 窗口
 	pRegisterClassExW      = user32.NewProc("RegisterClassExW")
 	pCreateWindowExW       = user32.NewProc("CreateWindowExW")
 	pDefWindowProcW        = user32.NewProc("DefWindowProcW")
+	pMessageBoxW           = user32.NewProc("MessageBoxW")
 	pDestroyWindow         = user32.NewProc("DestroyWindow")
 	pShowWindow            = user32.NewProc("ShowWindow")
 	pUpdateWindow          = user32.NewProc("UpdateWindow")
 	pSetWindowPos          = user32.NewProc("SetWindowPos")
 	pSetWindowLongPtrW     = user32.NewProc("SetWindowLongPtrW")
-	pGetWindowLongPtrW     = user32.NewProc("GetWindowLongPtrW")
 	pMoveWindow            = user32.NewProc("MoveWindow")
 	pGetClientRect         = user32.NewProc("GetClientRect")
 	pGetWindowRect         = user32.NewProc("GetWindowRect")
@@ -115,13 +115,12 @@ const (
 	WS_EX_TOPMOST     = 0x00000008
 	WS_EX_TRANSPARENT = 0x00000020 // 鼠标穿透：点击直接落到下层窗口
 	WS_EX_TOOLWINDOW  = 0x00000080 // 不进 Alt+Tab、不在任务栏显示
-	WS_EX_LAYERED     = 0x00080000
+	WS_EX_LAYERED     = 0x00080000 // 分层窗口：配合 SetLayeredWindowAttributes 做色键透明
 	// NOACTIVATE：点击不激活窗口。桌面层必须，否则点一下就会把时钟抬到所有窗口之前
 	WS_EX_NOACTIVATE = 0x08000000
 
-	// Get/SetWindowLongPtr 索引
-	GWL_STYLE   = -16
-	GWL_EXSTYLE = -20
+	// SetWindowLongPtr 索引
+	GWL_EXSTYLE = -20 // 扩展样式（另一个 GWL_STYLE=-16 本项目用不到）
 
 	// ShowWindow
 	SW_SHOW    = 5
@@ -132,14 +131,12 @@ const (
 	SWP_NOMOVE     = 0x0002
 	SWP_NOZORDER   = 0x0004
 	SWP_NOACTIVATE = 0x0010
-	SWP_SHOWWINDOW = 0x0040
 
 	// 层叠窗口
 	LWA_COLORKEY = 0x0001
 
 	// GetWindow 的 uCmd
-	GW_HWNDNEXT = 2 // z 序里"下面那一个"
-	GW_HWNDPREV = 3 // z 序里"上面那一个"
+	GW_HWNDPREV = 3 // z 序里"上面那一个"（+2 是下面那一个，未用）
 
 	// 窗口消息
 	WM_DESTROY           = 0x0002
@@ -183,10 +180,13 @@ const (
 	IDC_ARROW       = 32512
 	IDI_APPLICATION = 32512
 
+	// MessageBox 图标
+	MB_ICONERROR       = 0x00000010
+	MB_ICONINFORMATION = 0x00000040
+
 	// 对话框标志
 	CC_RGBINIT             = 0x00000001
 	CC_FULLOPEN            = 0x00000002
-	CF_SCREENFONTS         = 0x00000001
 	CF_INITTOLOGFONTSTRUCT = 0x00000040
 	CF_NOSCRIPTSEL         = 0x00800000
 
@@ -197,9 +197,17 @@ const (
 	REG_SZ               = 1
 	ERROR_SUCCESS        = 0
 	ERROR_FILE_NOT_FOUND = 2
+
+	// 单实例：CreateMutexW 创建的是已存在的同名互斥体时返回此错误码
+	ERROR_ALREADY_EXISTS = 183
 )
 
 // ---------- 结构体（顺序与 C 定义严格一致） ----------
+//
+// 结构体里的 `_` 不是摆设：64 位下 C 结构体有隐式对齐填充
+// （比如 WNDCLASSEXW 中 cbSize 是 uint32，后面要空 4 字节才能放下指针），
+// Go 不支持自动对齐到 C 规则，必须把这些空洞显式写出来，
+// 否则后面所有字段整体错位，而 Win32 不会报错。
 type RECT struct {
 	Left, Top, Right, Bottom int32
 }

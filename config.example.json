@@ -1,12 +1,12 @@
 {
   "hour_format": "24",
-  "color": "#00FFFF",
+  "color": "#39FF14",
   "font_family": "Consolas",
   "font_size": 48,
   "font_weight": "bold",
   "italic": false,
-  "x": 60,
-  "y": 60,
+  "x": 100,
+  "y": 100,
   "autostart": false,
   "click_through": true,
   "desktop_layer": true

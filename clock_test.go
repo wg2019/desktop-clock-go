@@ -294,3 +294,18 @@ func TestConfigPathBesideExe(t *testing.T) {
 		t.Errorf("配置应与 exe 同目录: %s vs %s", filepath.Dir(cp), filepath.Dir(exePath()))
 	}
 }
+
+// TestAcquireMutexSingleInstance 验证命名互斥体的互斥语义：
+// 第一次拿得到，第二次（模拟另一个进程）拿不到。
+//
+// 用测试专属的名字，避免和正在运行的时钟抢同一个互斥体 ——
+// 否则用户开着时钟时跑测试会假失败。
+func TestAcquireMutexSingleInstance(t *testing.T) {
+	name := `Local\DesktopClockTestMutex`
+	if !acquireMutex(name) {
+		t.Fatal("首次获取互斥体应当成功")
+	}
+	if acquireMutex(name) {
+		t.Error("同名互斥体第二次获取应当返回 false（表示已有实例）")
+	}
+}

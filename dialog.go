@@ -52,7 +52,7 @@ func (c *Clock) chooseFont() {
 	cf.LStructSize = uint32(unsafe.Sizeof(cf))
 	cf.HwndOwner = c.hwnd
 	cf.LpLogFont = &lf
-	cf.Flags = CF_INITTOLOGFONTSTRUCT | CF_NOSCRIPTSEL
+	cf.Flags = CF_INITTOLOGFONTSTRUCT | CF_NOSCRIPTSEL // 用上面的 LOGFONTW 初始化；不显示"脚本"下拉框
 
 	if r, _, _ := pChooseFontW.Call(uintptr(unsafe.Pointer(&cf))); r == 0 {
 		return // 用户取消
@@ -60,11 +60,13 @@ func (c *Clock) chooseFont() {
 
 	c.cfg.FontFamily = utf16ToString(lf.LfFaceName[:])
 
+	// LfHeight 为负表示"字符高度"（正值是"整行高度"，含行距）。
+	// 配置里统一存正数，用的时候再取负，避免两处语义打架。
 	size := int(lf.LfHeight)
 	if size < 0 {
 		size = -size
 	}
-	if size == 0 {
+	if size == 0 { // 极端情况下的兜底，防止存进 0 之后字体消失
 		size = 48
 	}
 	c.cfg.FontSize = size

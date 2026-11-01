@@ -22,20 +22,28 @@ func init() {
 }
 
 func main() {
-	// ── 关键 ──────────────────────────────────────────────────────────
-	// Win32 的窗口消息只会投递到"创建该窗口的那个 OS 线程"。
-	// Go 的 goroutine 默认会被调度到不同线程上，若不加锁，典型症状是：
-	// 窗口能显示出来，但鼠标点不动、托盘菜单弹不出来、定时器不触发 ——
-	// 而且完全不报错，极难排查。
+	// Win32 的窗口消息只投递给"创建该窗口的那个 OS 线程"。
+	// Go 的 goroutine 会被调度到不同线程上，不加锁的典型症状是：
+	// 窗口能显示，但鼠标点不动、托盘菜单弹不出来、定时器不触发——而且完全不报错。
 	runtime.LockOSThread()
-	// ─────────────────────────────────────────────────────────────────
 
-	c, err := newClock()
-	if err != nil {
+	// 必须在建窗口之前判断：否则第二个实例会先画出自己的时钟和托盘图标，
+	// 再退出，用户会看到一闪而过的残影。
+	if !acquireSingleInstance() {
+		// Win11 默认把新程序的托盘图标折叠起来，只说"去托盘找"会让人找不着，
+		// 所以这里直接给出恢复路径。
+		showInfo("桌面时钟",
+			"时钟已经在运行了。\n\n"+
+				"若任务栏上找不到它的图标，请打开：\n"+
+				"设置 > 个性化 > 任务栏 > 其他系统托盘图标\n"+
+				"把「桌面时钟」的开关打开。")
+		return
+	}
+
+	if err := newClock(); err != nil {
 		showError("桌面时钟启动失败", err.Error())
 		os.Exit(1)
 	}
-	app = c
 
 	messageLoop()
 }
@@ -130,13 +138,49 @@ func wndProc(hwnd, msg, wparam, lparam uintptr) uintptr {
 	return r
 }
 
-// showError 用 MessageBox 弹错误。
+// showError / showInfo 用 MessageBox 弹提示。
 // 编译成 -H windowsgui 后没有控制台，fmt.Println 的内容用户看不到，
-// 所以启动期致命错误必须走弹窗。
+// 所以任何要告知用户的信息都必须走弹窗。
 func showError(title, text string) {
-	pMessageBoxW := user32.NewProc("MessageBoxW")
+	showMessageBox(title, text, MB_ICONERROR)
+}
+
+func showInfo(title, text string) {
+	showMessageBox(title, text, MB_ICONINFORMATION)
+}
+
+// showMessageBox 的 uType 传 MB_ICON*；hwnd 传 0 = 无父窗口的独立对话框。
+func showMessageBox(title, text string, flags uintptr) {
 	pMessageBoxW.Call(0,
 		uintptr(unsafe.Pointer(utf16Ptr(text))),
 		uintptr(unsafe.Pointer(utf16Ptr(title))),
-		0x00000010) // MB_ICONERROR
+		flags)
+}
+
+// mutexHandle 保存命名互斥体的句柄。
+// 进程退出时系统会自动释放，这里保留引用是为了让句柄在程序生命周期内始终有效。
+var mutexHandle uintptr
+
+// acquireSingleInstance 用命名互斥体保证同一登录会话内只运行一个时钟进程，
+// 返回 false 表示已有实例在跑。
+func acquireSingleInstance() bool {
+	// 名字加 "Local\" 前缀，作用域限于当前登录会话：不同用户各自开一个互不干扰，
+	// 与自启动写在 HKCU（本身按用户隔离）的行为保持一致。
+	return acquireMutex(`Local\DesktopClockSingleInstance`)
+}
+
+// acquireMutex 尝试独占名为 name 的互斥体。抽出来单独一个函数是为了让测试
+// 能用独立的名字验证，不至于和真实运行的时钟抢同一个互斥体。
+func acquireMutex(name string) bool {
+	h, _, err := pCreateMutexW.Call(0, 0, uintptr(unsafe.Pointer(utf16Ptr(name))))
+	if h == 0 {
+		// 极端情况下创建失败（句柄耗尽等）：放行让程序能启动，
+		// 双开总好过完全打不开。
+		return true
+	}
+	mutexHandle = h
+	if errno, ok := err.(syscall.Errno); ok && errno == ERROR_ALREADY_EXISTS {
+		return false
+	}
+	return true
 }

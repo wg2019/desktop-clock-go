@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"unsafe"
 )
 
@@ -29,7 +28,9 @@ func (c *Clock) setupTray() {
 	copyUTF16(c.nid.SzTip[:], "桌面时钟")
 
 	if r, _, _ := pShellNotifyIconW.Call(NIM_ADD, uintptr(unsafe.Pointer(&c.nid))); r == 0 {
-		fmt.Println("[提示] 托盘图标创建失败；设置仍可通过编辑 config.json 调整")
+		// 编译成 -H windowsgui 后没有控制台，只能靠弹窗告知；
+		// 托盘没了等于菜单没了，用户需要知道该改 config.json。
+		showError("桌面时钟", "托盘图标创建失败。\n设置仍可通过编辑 config.json 调整。")
 	}
 }
 
@@ -85,6 +86,8 @@ func (c *Clock) showTrayMenu() {
 
 // ---------- 命令分发 ----------
 
+// onCommand 分发菜单命令。
+// wparam 低 16 位是命令 ID，高 16 位是通知码（菜单项这里恒为 0，忽略）。
 func (c *Clock) onCommand(wparam uintptr) {
 	switch int(wparam & 0xFFFF) {
 	case idColor:
@@ -112,7 +115,7 @@ func (c *Clock) onCommand(wparam uintptr) {
 		c.cfg.Autostart = !c.cfg.Autostart
 		if !setAutostart(c.cfg.Autostart) {
 			c.cfg.Autostart = !c.cfg.Autostart // 写注册表失败则回滚 UI 状态
-			fmt.Println("[警告] 读写注册表失败，自启设置未生效")
+			showError("桌面时钟", "写入开机自启失败，设置未生效。")
 		}
 		_ = saveConfig(c.cfg)
 	case idExit:
