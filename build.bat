@@ -1,8 +1,8 @@
 @echo off
-chcp 65001 >nul
+chcp 936 >nul
 REM ============================================================
-REM  æ¡Œé¢æ—¶é’Ÿï¼ˆGo + Win32ï¼‰ä¸€é”®æ„å»º
-REM  çº¯ Go ç›´æ¥è°ƒ Win32 APIï¼Œé›¶ç¬¬ä¸‰æ–¹ä¾èµ–ï¼Œé™æ€å•æ–‡ä»¶äº§ç‰©
+REM  ×ÀÃæÊ±ÖÓ£¨Go + Win32£©Ò»¼ü¹¹½¨
+REM  ´¿ Go Ö±½Óµ÷ Win32 API£¬ÁãµÚÈı·½ÒÀÀµ£¬¾²Ì¬µ¥ÎÄ¼ş²úÎï
 REM ============================================================
 
 setlocal
@@ -10,52 +10,63 @@ set GOOS=windows
 set GOARCH=amd64
 set CGO_ENABLED=0
 
+REM Go ³£±»ÊÖ¶¯½âÑ¹µ½·ÇÄ¬ÈÏÎ»ÖÃ¡¢Ã»½øÏµÍ³ PATH£¬ÕâÀïÏÈ²¹¼¸¸ö³£¼ûÎ»ÖÃ
+if not defined GOROOT (
+    if exist "%USERPROFILE%\Documents\go\bin\go.exe" set "PATH=%USERPROFILE%\Documents\go\bin;%PATH%"
+    if exist "C:\Go\bin\go.exe" set "PATH=C:\Go\bin;%PATH%"
+    if exist "%LOCALAPPDATA%\Programs\Go\bin\go.exe" set "PATH=%LOCALAPPDATA%\Programs\Go\bin;%PATH%"
+)
+
 where go >nul 2>nul
 if errorlevel 1 (
-    echo [é”™è¯¯] æ‰¾ä¸åˆ° go å‘½ä»¤ï¼Œè¯·å…ˆæŠŠ Go çš„ bin ç›®å½•åŠ å…¥ PATH
+    echo [´íÎó] ÕÒ²»µ½ go ÃüÁî¡£
+    echo        Çë°Ñ Go µÄ bin Ä¿Â¼¼ÓÈë PATH£¬»ò°Ñ Go ½âÑ¹µ½ÒÔÏÂÈÎÒ»Î»ÖÃ£º
+    echo          %%USERPROFILE%%\Documents\go
+    echo          C:\Go
+    echo          %%LOCALAPPDATA%%\Programs\Go
     pause
     exit /b 1
 )
 
-REM å›¾æ ‡èµ„æºï¼ˆ.sysoï¼‰ä¸å­˜åœ¨æ—¶è‡ªåŠ¨ç”Ÿæˆï¼›éœ€è¦ go-winres å·¥å…·
+REM Í¼±ê×ÊÔ´£¨.syso£©²»´æÔÚÊ±×Ô¶¯Éú³É£»ĞèÒª go-winres ¹¤¾ß
 if not exist rsrc_windows_amd64.syso (
     if not exist icon.ico (
-        echo [é”™è¯¯] ç¼ºå°‘ icon.icoï¼Œæ— æ³•ç”Ÿæˆå›¾æ ‡èµ„æº
+        echo [´íÎó] È±ÉÙ icon.ico£¬ÎŞ·¨Éú³ÉÍ¼±ê×ÊÔ´
         pause
         exit /b 1
     )
-    echo [1/3] å®‰è£… go-winres ...
+    echo [Í¼±ê] °²×° go-winres ...
     go install github.com/tc-hib/go-winres@latest
     if errorlevel 1 (
-        echo [é”™è¯¯] go-winres å®‰è£…å¤±è´¥ï¼ˆæ£€æŸ¥ç½‘ç»œæˆ– GOPROXYï¼‰
+        echo [´íÎó] go-winres °²×°Ê§°Ü£¨¼ì²éÍøÂç»ò GOPROXY£©
         pause
         exit /b 1
     )
-    echo [2/3] ç”Ÿæˆå›¾æ ‡èµ„æº ...
-    go-winres simply --icon icon.ico --manifest gui --product-name "æ¡Œé¢æ—¶é’Ÿ" --product-version "1.0.0.0" --file-version "1.0.0.0" --file-description "Windows æ¡Œé¢æ—¶é’Ÿ"
+    echo [Í¼±ê] Éú³É×ÊÔ´ÎÄ¼ş ...
+    go-winres simply --icon icon.ico --manifest gui --product-name "×ÀÃæÊ±ÖÓ" --product-version "1.0.0.0" --file-version "1.0.0.0" --file-description "Windows ×ÀÃæÊ±ÖÓ"
     if errorlevel 1 (
-        echo [é”™è¯¯] èµ„æºç”Ÿæˆå¤±è´¥
+        echo [´íÎó] ×ÊÔ´Éú³ÉÊ§°Ü
         pause
         exit /b 1
     )
 ) else (
-    echo [1/2] å›¾æ ‡èµ„æºå·²å­˜åœ¨ï¼Œè·³è¿‡ç”Ÿæˆ
+    echo [Í¼±ê] ×ÊÔ´ÒÑ´æÔÚ£¬Ìø¹ıÉú³É
 )
 
-echo [3/3] ç¼–è¯‘ ...
-REM -H windowsgui : GUI å­ç³»ç»Ÿï¼ŒåŒå‡»ä¸å¼¹é»‘æ¡†
-REM -s -w         : å»æ‰ç¬¦å·è¡¨å’Œè°ƒè¯•ä¿¡æ¯ï¼Œä½“ç§¯å‡çº¦ 30%%
+echo [±àÒë] ¿ªÊ¼¹¹½¨ ...
+REM -H windowsgui : GUI ×ÓÏµÍ³£¬Ë«»÷²»µ¯ºÚ¿ò
+REM -s -w         : È¥µô·ûºÅ±íºÍµ÷ÊÔĞÅÏ¢£¬Ìå»ı¼õĞ¡Ô¼ 30%
 go build -trimpath -ldflags "-H windowsgui -s -w" -o DesktopClockGo.exe .
 if errorlevel 1 (
     echo.
-    echo [é”™è¯¯] ç¼–è¯‘å¤±è´¥
+    echo [´íÎó] ±àÒëÊ§°Ü
     pause
     exit /b 1
 )
 
 echo.
-echo æ„å»ºå®Œæˆ: DesktopClockGo.exe
-for %%F in (DesktopClockGo.exe) do echo æ–‡ä»¶å¤§å°: %%~zF å­—èŠ‚
+echo ¹¹½¨Íê³É: DesktopClockGo.exe
+for %%F in (DesktopClockGo.exe) do echo ÎÄ¼ş´óĞ¡: %%~zF ×Ö½Ú
 echo.
-echo æç¤º: é¦–æ¬¡è¿è¡Œä¼šåœ¨ exe åŒç›®å½•ç”Ÿæˆ config.json
+echo ÌáÊ¾: Ê×´ÎÔËĞĞ»áÔÚ exe Í¬Ä¿Â¼Éú³É config.json
 pause

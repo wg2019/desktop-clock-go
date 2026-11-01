@@ -5,12 +5,18 @@ Windows 11 桌面时钟。贴在桌面上、永远位于所有应用窗口之下
 **纯 Go + 直接调 Win32 API，零第三方依赖**（连 `golang.org/x/sys` 都不用），
 `CGO_ENABLED=0` 静态编译，产物是单个 exe，离线可构建。
 
+> **关于 "Win32" 与 "64 位"**：本项目编译目标是 64 位 Windows
+> （`GOARCH=amd64`，PE 头 `Machine = 0x8664`、`PE32+`）。Win32 是 Windows
+> 原生接口**家族的名字**——从 1993 年 Windows NT 起就叫这个，64 位程序用的
+> 是同一套 API，`user32.dll` / `gdi32.dll` 里的 "32" 同样是 16→32 位年代
+> 的遗留命名。两者并不矛盾，也不表示这是 32 位程序。
+
 ## 设计取向
 
 不引入第三方库，所有 Win32 调用手写声明：
 
-- 单文件 3.23 MB，静态链接，不依赖任何运行库
-- 启动约 50 ms，常驻内存 16 MB
+- 单文件约 3.1 MB（3,217,408 字节），静态链接，不依赖任何运行库
+- 启动约 50 ms，常驻内存约 16 MB
 - 配置写在 exe 同目录，自启项只写 `HKCU`，不碰系统目录，也不解压到 `%TEMP%`
 - 结构体布局用**编译期断言**校验（`uint(unsafe.Sizeof(x)) - 80`），
   字段对不上是编译错误，而不是运行时静默失败
@@ -24,23 +30,30 @@ Windows 11 桌面时钟。贴在桌面上、永远位于所有应用窗口之下
 | 开机自启 | `HKCU\...\Run`，托盘菜单可开关 |
 | 拖动 + 锁定 | 取消「锁定(鼠标穿透)」后可拖动；开启后点击穿透到桌面 |
 | 桌面层 | 贴在桌面上、压在所有应用之下，点它不抢焦点 |
+| 防重复启动 | 命名互斥体（`Local\DesktopClockSingleInstance`），第二个实例提示后自行退出 |
 
 ## 文件结构
 
 ```
 desktop-clock-go/
-├── go.mod
-├── main.go        入口：LockOSThread + 消息循环 + wndProc        ~120 行
-├── win32.go       DLL/常量/结构体声明 + 编译期尺寸断言          ~320 行
-├── config.go      JSON 配置 + 注册表自启（advapi32）+ 颜色工具   ~160 行
-├── clock.go       窗口/字体/绘制/桌面层级/拖动                  ~260 行
-├── tray.go        托盘图标 + 右键菜单 + 命令分发                ~110 行
-├── dialog.go      ChooseColorW / ChooseFontW                   ~90 行
-├── clock_test.go  单元测试（19 个用例）                        ~280 行
-├── icon.ico       图标源（也用于托盘）
-├── rsrc_windows_amd64.syso   编译进 exe 的图标资源（go-winres 生成）
-└── DesktopClockGo.exe        产物
+├── go.mod                     module desktopclock（无第三方依赖）
+├── main.go                    入口：LockOSThread + 单实例检查 + 消息循环 + wndProc   182 行
+├── win32.go                   DLL/常量/结构体声明 + 编译期尺寸断言                   408 行
+├── config.go                  JSON 配置 + 注册表自启（advapi32）+ 颜色工具           200 行
+├── clock.go                   窗口/字体/绘制/桌面层级/拖动/自检                       405 行
+├── tray.go                    托盘图标 + 右键菜单 + 命令分发                          124 行
+├── dialog.go                  ChooseColorW / ChooseFontW                              85 行
+├── clock_test.go              单元测试（20 个用例）                                  311 行
+├── build.bat                  一键构建（图标资源 + 正式参数编译）
+├── icon.ico                   图标源文件（托盘与 exe 共用）
+├── rsrc_windows_amd64.syso    编译进 exe 的图标与版本资源（go-winres 生成）
+├── config.example.json        配置模板（仓库不含本机实际配置）
+├── .gitignore / .gitattributes / LICENSE
+│
+└── DesktopClockGo.exe         构建产物，不入库
 ```
+
+源码共约 1400 行（不含测试），测试 311 行。
 
 ## 构建
 
@@ -62,14 +75,15 @@ CGO_ENABLED=0 go build -trimpath -ldflags "-H windowsgui -s -w" -o DesktopClockG
 ## 测试
 
 ```bash
-go test -v ./...     # 19 个用例
+go test -v ./...     # 20 个用例
 ```
 
 覆盖：配置解析与往返一致性、未知字段兼容、12/24 制边界（0 点/12 点）、
 颜色 COLORREF 字节序、非法颜色回退、Win32 结构体尺寸、`lfFaceName` 偏移、
-负常量符号扩展、`HKEY_CURRENT_USER` 值、UTF-16 截断、菜单 ID 唯一性、exe 路径绝对性。
+负常量符号扩展、`HKEY_CURRENT_USER` 值、UTF-16 截断、菜单 ID 唯一性、
+exe 路径绝对性、单实例互斥体语义。
 
-## 实现要点（Win32 + Go 的三个坑）
+## 实现要点（Win32 + Go 的几个坑）
 
 ### 1. 窗口消息是「线程绑定」的
 
@@ -105,6 +119,19 @@ const (
 另外 `Win+D` / 右键"显示桌面"会把 `Progman` 抬到前台把时钟挤走，所以每秒自检一次
 （`isAnchored` 会跳过 z 序里夹着的隐藏 IME 辅助窗口，避免误判），被挤走就重新落位。
 
+### 4. 进程内的变量挡不住第二次双击
+
+`sync.Mutex` 或包级变量只在**当前进程**内有效。用户双击两次是两个进程，各自持有
+自己的变量，谁也拦不住谁 —— 结果是两个时钟叠在同一位置、两个托盘图标，退出其中一个
+另一个还在。
+
+跨进程互斥只能交给操作系统：`CreateMutexW` 建一个命名互斥体，第二个进程拿到
+`ERROR_ALREADY_EXISTS` 就说明已有实例在跑。名字加 `Local\` 前缀，把作用域限定在当前
+登录会话，不同用户各开一个互不干扰 —— 和自启项写在 `HKCU` 的隔离粒度保持一致。
+
+注意别在测试里直接用生产环境的互斥体名：用户正开着时钟时，测试会「首次获取即失败」
+而假红。所以 `acquireMutex` 把名字作为参数，测试传自己的名字。
+
 ## 托盘菜单
 
 - 选择颜色… / 选择字体…
@@ -121,23 +148,33 @@ const (
 ```json
 {
   "hour_format": "24",
-  "color": "#00FFFF",
+  "color": "#39FF14",
   "font_family": "Consolas",
   "font_size": 48,
   "font_weight": "bold",
   "italic": false,
-  "x": 60,
-  "y": 60,
+  "x": 100,
+  "y": 100,
   "autostart": false,
   "click_through": true,
   "desktop_layer": true
 }
 ```
 
+上表即 `defaultConfig()` 的值：配置文件不存在时按这套生成。字段含义：
+
+| 字段 | 说明 |
+| --- | --- |
+| `hour_format` | `"24"` 或 `"12"` |
+| `color` | `#RRGGBB`，格式非法时回退到 `#39FF14` |
+| `font_size` | 字符高度，单位像素 |
+| `x` / `y` | 窗口左上角坐标，拖动后会写回 |
+| `autostart` | 启动时以注册表实际状态为准，这里只是落盘记录 |
+
 ## 测试与验收
 
 ```bash
-go test ./...     # 19 个单元测试：配置兼容性、时间格式化、颜色字节序、
+go test ./...     # 20 个单元测试：配置兼容性、时间格式化、颜色字节序、
                   # 结构体尺寸、UTF-16 转换、注册表路径、菜单 ID 唯一性等
 go vet ./...      # 仅 1 条提示，见下方说明
 gofmt -l .        # 应无输出
@@ -149,7 +186,7 @@ gofmt -l .        # 应无输出
 任何等价写法（`unsafe.Add`、`unsafe.Slice`）都躲不过 vet 的 `unsafeptr` 静态检查，
 代码里已就地注释说明。
 
-功能回归验证思路（当时用一个临时小工具完成，工具未入库，方法可复用）：
+功能回归的复现方法（用的是临时小工具，未入库，思路可照搬）：
 向时钟窗口 `PostMessage(hwnd, WM_COMMAND, <菜单ID>, 0)` 模拟点击菜单，
 再用 `GetWindowLong(GWL_EXSTYLE)` / `GetWindowRect` 读回扩展样式与尺寸来断言，
 全程不抢焦点、不弹窗、不影响前台程序。
@@ -157,22 +194,20 @@ gofmt -l .        # 应无输出
 菜单 ID：`101` 颜色 · `102` 字体 · `103` 12小时制 · `104` 鼠标穿透 ·
 `105` 开机自启 · `106` 退出 · `107` 桌面层
 
-验收记录（2026-11-01）：
+验收记录（2026-11-01，Windows 11 26H2 / build 26300）：
 
 | 项目 | 结果 |
 | --- | --- |
-| 单元测试 | 19/19 通过 |
+| 单元测试 | 20/20 通过 |
 | 24→12 小时制 | 窗口 248→393px，还原正常 |
 | 鼠标穿透开关 | 扩样式 `TRANSPARENT` 正确增删 |
 | 桌面层开关 | 关闭后变 `TOPMOST` 悬浮，开启后回到 `NOACTIVATE` 底层 |
 | 开机自启开关 | 注册表项正确增删 |
 | 静置 8 秒 | 位置/尺寸/样式无漂移 |
+| 防重复启动 | 第二个实例弹出提示后以退出码 0 结束，首个实例窗口不受影响 |
 | 退出 | 进程干净结束 |
-| 正式构建 | 3.2MB，Subsystem=2(GUI)，无控制台窗口 |
+| 正式构建 | 3.1MB，Subsystem=2(GUI)，无控制台窗口 |
 
 ## 许可证
 
 MIT，见 [LICENSE](LICENSE)。可自由使用、修改、分发，包括商用；保留版权声明即可。
-
-Copyright 行目前写的是 "DesktopClock Contributors"，如果你想署自己的名字，
-改 LICENSE 第一段的 `Copyright (c) 2026 ...` 那一行即可。

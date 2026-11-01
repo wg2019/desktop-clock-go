@@ -5,6 +5,10 @@
 *.mod    text eol=lf
 *.md     text eol=lf
 *.json   text eol=lf
+
+# build.bat 必须是 GBK(936) 编码 + CRLF：
+# cmd 按系统代码页解析批处理文件，存成 UTF-8 会让中文字节被拆成命令，
+# 报一堆「不是内部或外部命令」。改编码前请先在 cmd 窗口里实测。
 *.bat    text eol=crlf
 
 # 二进制资源，禁止 git 做换行转换
