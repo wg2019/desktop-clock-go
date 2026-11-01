@@ -1,22 +1,19 @@
-# 桌面时钟（Go / Win32 版）
+# 桌面时钟
 
 Windows 11 桌面时钟。贴在桌面上、永远位于所有应用窗口之下，点击不抢焦点。
 
 **纯 Go + 直接调 Win32 API，零第三方依赖**（连 `golang.org/x/sys` 都不用），
 `CGO_ENABLED=0` 静态编译，产物是单个 exe，离线可构建。
 
-## 与 Python 版的关系
+## 设计取向
 
-功能完全等价，`config.json` 字段一字不差 —— 两个版本可以互相读取配置，随时切换着跑。
+不引入第三方库，所有 Win32 调用手写声明：
 
-| | Python 版 | Go 版 |
-|---|---|---|
-| exe 体积 | 7.86 MB | **3.23 MB** |
-| 启动耗时 | 0.4–1.2s（onefile 要解压到 `%TEMP%`） | **~50ms** |
-| 常驻内存 | 15–25 MB | **16 MB** |
-| 运行时依赖 | 需要 Python 运行时（打包进 exe） | **无**，静态链接 |
-| 配置/自启路径 | 需 `GetModuleFileNameW` 绕开临时目录 | 天然稳定 |
-| 可维护性 | ctypes 声明式 | 编译期类型检查 + 结构体尺寸断言 |
+- 单文件 3.23 MB，静态链接，不依赖任何运行库
+- 启动约 50 ms，常驻内存 16 MB
+- 配置写在 exe 同目录，自启项只写 `HKCU`，不碰系统目录，也不解压到 `%TEMP%`
+- 结构体布局用**编译期断言**校验（`uint(unsafe.Sizeof(x)) - 80`），
+  字段对不上是编译错误，而不是运行时静默失败
 
 ## 功能
 
@@ -68,7 +65,7 @@ CGO_ENABLED=0 go build -trimpath -ldflags "-H windowsgui -s -w" -o DesktopClockG
 go test -v ./...     # 19 个用例
 ```
 
-覆盖：配置与 Python 版互读、未知字段兼容、往返一致性、12/24 制边界（0 点/12 点）、
+覆盖：配置解析与往返一致性、未知字段兼容、12/24 制边界（0 点/12 点）、
 颜色 COLORREF 字节序、非法颜色回退、Win32 结构体尺寸、`lfFaceName` 偏移、
 负常量符号扩展、`HKEY_CURRENT_USER` 值、UTF-16 截断、菜单 ID 唯一性、exe 路径绝对性。
 
@@ -119,7 +116,7 @@ const (
 
 ## 配置
 
-与 exe 同目录的 `config.json`，字段与 Python 版一致：
+与 exe 同目录的 `config.json`：
 
 ```json
 {

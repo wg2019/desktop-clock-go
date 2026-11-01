@@ -11,8 +11,8 @@ import (
 	"unsafe"
 )
 
-// Config 与 Python 版 config.json 字段完全一致 —— 两个版本可以互相读取，
-// 随时切换着跑都不会丢设置。
+// Config 对应 exe 同目录的 config.json。
+// json tag 是外部契约，改名等于破坏用户已有配置，测试里锁死了字段名。
 type Config struct {
 	HourFormat   string `json:"hour_format"` // "24" | "12"
 	Color        string `json:"color"`       // "#RRGGBB"

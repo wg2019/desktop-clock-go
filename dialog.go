@@ -28,14 +28,14 @@ func (c *Clock) ensureCustColors() {
 		}
 	}
 	for i := range c.custColors {
-		c.custColors[i] = 0x00FF00FF // 洋红，与 Python 版保持一致
+		c.custColors[i] = 0x00FF00FF // 洋红，作为自定义颜色区的初始占位值
 	}
 }
 
 // chooseFont 调用系统字体对话框。
 //
-// 关键点：lfItalic 必须双向同步 —— 对话框里勾了斜体要能读回来，
-// 读不回来的话"选了斜体却不生效"（Python 版就踩过这个 bug）。
+// 关键点：lfItalic 必须双向同步 —— 进去时把当前状态填进 LOGFONTW，
+// 回来时再把 lfItalic 读回配置，否则会出现"勾了斜体却不生效"。
 func (c *Clock) chooseFont() {
 	var lf LOGFONTW
 	lf.LfHeight = -int32(c.cfg.FontSize)

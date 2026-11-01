@@ -8,12 +8,12 @@ import (
 	"unsafe"
 )
 
-// ---------- 配置：与 Python 版互读 ----------
+// ---------- 配置：外部 json 兼容性 ----------
 
-// TestConfigJSONCompatible 直接用 Python 版写出的 config.json 原文反序列化。
-// 这条测试保证两个版本可以互相接管设置，切换版本不丢配置。
+// TestConfigJSONCompatible 用一份手写的、字段齐全的 config.json 原文反序列化。
+// 这条测试锁死配置字段名：以后重命名字段会立刻失败，防止用户升级后丢设置。
 func TestConfigJSONCompatible(t *testing.T) {
-	pythonJSON := `{
+	rawJSON := `{
   "hour_format": "12",
   "color": "#00FFFF",
   "font_family": "Microsoft YaHei",
@@ -27,8 +27,8 @@ func TestConfigJSONCompatible(t *testing.T) {
   "desktop_layer": true
 }`
 	var cfg Config
-	if err := json.Unmarshal([]byte(pythonJSON), &cfg); err != nil {
-		t.Fatalf("解析 Python 版配置失败: %v", err)
+	if err := json.Unmarshal([]byte(rawJSON), &cfg); err != nil {
+		t.Fatalf("解析配置文件失败: %v", err)
 	}
 
 	checks := []struct {
