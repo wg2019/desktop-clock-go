@@ -206,6 +206,7 @@ const (
 	KEY_SET_VALUE        = 0x0002
 	KEY_ALL_ACCESS       = 0xF003F // 含 DELETE，删子键必须
 	REG_SZ               = 1
+	REG_DWORD            = 4
 	ERROR_SUCCESS        = 0
 	ERROR_FILE_NOT_FOUND = 2
 	ERROR_NO_MORE_ITEMS  = 259 // RegEnumKeyExW 枚举结束

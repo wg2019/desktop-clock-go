@@ -97,6 +97,7 @@ func wndProc(hwnd, msg, wparam, lparam uintptr) uintptr {
 	case WM_DESTROY:
 		pKillTimer.Call(hwnd, timerTick)
 		pKillTimer.Call(hwnd, timerTrayRetry)
+		pKillTimer.Call(hwnd, timerTrayPromote)
 		if c != nil {
 			c.removeTray()
 		}
@@ -124,6 +125,16 @@ func wndProc(hwnd, msg, wparam, lparam uintptr) uintptr {
 			if wparam == timerTrayRetry {
 				pKillTimer.Call(hwnd, timerTrayRetry)
 				c.setupTray()
+				return 0
+			}
+			if wparam == timerTrayPromote {
+				pKillTimer.Call(hwnd, timerTrayPromote)
+				c.settleTrayPromote()
+				return 0
+			}
+			if wparam == timerTrayRepair {
+				pKillTimer.Call(hwnd, timerTrayRepair)
+				c.reregisterTray()
 				return 0
 			}
 			c.keepOnDesktop()

@@ -75,6 +75,9 @@ func newClock() error {
 	c.applyLayer()
 	c.setupTray()
 	pSetTimer.Call(c.hwnd, timerTick, 1000, 0) // 每秒一次：刷新时间 + 自检层级
+	// 任务栏有时会把第一次登记静默丢掉（返回成功但图标不出现、记录也不写），
+	// 过几秒补登记一次兜底。
+	pSetTimer.Call(c.hwnd, timerTrayRepair, trayRepairDelay, 0)
 
 	return nil
 }

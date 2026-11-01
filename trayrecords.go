@@ -23,6 +23,7 @@ import (
 const (
 	notifyIconSettingsPath = `Control Panel\NotifyIconSettings`
 	execPathValue          = "ExecutablePath"
+	promotedValue          = "IsPromoted" // 1 = 常显在任务栏，0/缺失 = 折叠进溢出区
 )
 
 // recordKind 是一条托盘登记记录相对于「当前运行的程序」的分类。
@@ -69,15 +70,8 @@ type trayAudit struct {
 func auditTrayRecords(selfExe string) trayAudit {
 	var out trayAudit
 
-	var hKey uintptr
-	ret, _, _ := pRegOpenKeyExW.Call(
-		hkeyCurrentUser,
-		uintptr(unsafe.Pointer(utf16Ptr(notifyIconSettingsPath))),
-		0,
-		KEY_ALL_ACCESS, // 需要 DELETE 权限才能删子键，KEY_ALL_ACCESS 已包含
-		uintptr(unsafe.Pointer(&hKey)),
-	)
-	if ret != ERROR_SUCCESS {
+	hKey, ok := openNotifyIconSettings()
+	if !ok {
 		return out
 	}
 	defer pRegCloseKey.Call(hKey)
@@ -96,6 +90,110 @@ func auditTrayRecords(selfExe string) trayAudit {
 		}
 	}
 	return out
+}
+
+// openNotifyIconSettings 以可读写（含删除子键）的权限打开托盘登记表。
+func openNotifyIconSettings() (uintptr, bool) {
+	var hKey uintptr
+	ret, _, _ := pRegOpenKeyExW.Call(
+		hkeyCurrentUser,
+		uintptr(unsafe.Pointer(utf16Ptr(notifyIconSettingsPath))),
+		0,
+		KEY_ALL_ACCESS, // 需要 DELETE 权限才能删子键，KEY_ALL_ACCESS 已包含
+		uintptr(unsafe.Pointer(&hKey)),
+	)
+	if ret != ERROR_SUCCESS {
+		return 0, false
+	}
+	return hKey, true
+}
+
+// promoteTrayIcon 把本程序的登记记录标记为「常显」。
+//
+// Win11 默认把新程序的图标折叠进溢出区。折叠状态本该能在任务栏的 "^" 里找到，
+// 但实测这台机器上折叠的图标连 "^" 都不出现 —— 等于图标彻底消失。而没有托盘图标
+// 就进不了右键菜单，程序会变得无法操作（只能手动改 config.json），所以登记成功后
+// 主动把记录改成常显，再重新登记一次让任务栏重新读取。
+//
+// 返回两个值：
+//   - changed：这次真的改动了记录，调用方需要重新登记图标
+//   - found：找到了指向本程序的记录。首次运行那一刻任务栏可能还没来得及写记录，
+//     found=false 时调用方应该过一会儿再试一次
+func promoteTrayIcon(selfExe string) (changed, found bool) {
+	hKey, ok := openNotifyIconSettings()
+	if !ok {
+		return false, false
+	}
+	defer pRegCloseKey.Call(hKey)
+
+	for _, sub := range listSubKeys(hKey) {
+		if !strings.EqualFold(queryRegString(hKey, sub, execPathValue), selfExe) {
+			continue
+		}
+		if queryRegDword(hKey, sub, promotedValue) == 1 {
+			return false, true // 已经是常显
+		}
+		return writeRegDword(hKey, sub, promotedValue, 1), true
+	}
+	return false, false
+}
+
+// queryRegDword 读取子键下的一个 REG_DWORD，不存在或类型不符时返回 0。
+func queryRegDword(parent uintptr, subKey, value string) uint32 {
+	var hKey uintptr
+	ret, _, _ := pRegOpenKeyExW.Call(
+		parent,
+		uintptr(unsafe.Pointer(utf16Ptr(subKey))),
+		0,
+		KEY_QUERY_VALUE,
+		uintptr(unsafe.Pointer(&hKey)),
+	)
+	if ret != ERROR_SUCCESS {
+		return 0
+	}
+	defer pRegCloseKey.Call(hKey)
+
+	var typ, size uint32
+	var data uint32
+	size = 4
+	ret, _, _ = pRegQueryValueExW.Call(
+		hKey,
+		uintptr(unsafe.Pointer(utf16Ptr(value))),
+		0,
+		uintptr(unsafe.Pointer(&typ)),
+		uintptr(unsafe.Pointer(&data)),
+		uintptr(unsafe.Pointer(&size)),
+	)
+	if ret != ERROR_SUCCESS || typ != REG_DWORD || size != 4 {
+		return 0
+	}
+	return data
+}
+
+// writeRegDword 写一个 REG_DWORD，成功返回 true。
+func writeRegDword(parent uintptr, subKey, value string, data uint32) bool {
+	var hKey uintptr
+	ret, _, _ := pRegOpenKeyExW.Call(
+		parent,
+		uintptr(unsafe.Pointer(utf16Ptr(subKey))),
+		0,
+		KEY_SET_VALUE,
+		uintptr(unsafe.Pointer(&hKey)),
+	)
+	if ret != ERROR_SUCCESS {
+		return false
+	}
+	defer pRegCloseKey.Call(hKey)
+
+	ret, _, _ = pRegSetValueExW.Call(
+		hKey,
+		uintptr(unsafe.Pointer(utf16Ptr(value))),
+		0,
+		REG_DWORD,
+		uintptr(unsafe.Pointer(&data)),
+		4,
+	)
+	return ret == ERROR_SUCCESS
 }
 
 // listSubKeys 枚举一个注册表键下的所有子键名。
