@@ -40,12 +40,12 @@ Windows 11 桌面时钟。贴在桌面上、永远位于所有应用窗口之下
 desktop-clock-go/
 ├── go.mod                     module desktopclock（无第三方依赖）
 ├── main.go                    入口：LockOSThread + 单实例检查 + 消息循环 + wndProc   236 行
-├── win32.go                   DLL/常量/结构体声明 + 编译期尺寸断言                   424 行
-├── config.go                  JSON 配置 + 注册表自启（advapi32）+ 颜色工具           200 行
-├── clock.go                   窗口/字体/绘制/桌面层级/拖动/自检                       411 行
-├── tray.go                    托盘图标 + 右键菜单 + 命令分发                          189 行
+├── win32.go                   DLL/常量/结构体声明 + 编译期尺寸断言                   428 行
+├── config.go                  JSON 配置 + 注册表自启（advapi32）+ 颜色工具           202 行
+├── clock.go                   窗口/字体/绘制/桌面层级/拖动/自检                       423 行
+├── tray.go                    托盘图标 + 右键菜单 + 命令分发                          199 行
 ├── trayrecords.go             托盘记录清理 / 副本检测 / 常显自愈                      297 行
-├── dialog.go                  ChooseColorW / ChooseFontW                              85 行
+├── dialog.go                  ChooseColorW / ChooseFontW                              76 行
 ├── clock_test.go              单元测试（20 个用例）                                  311 行
 ├── trayrecords_test.go        记录分类逻辑的单测（3 个用例 + 子测试）                 107 行
 ├── build.bat                  一键构建（图标资源 + 正式参数编译）
@@ -57,14 +57,14 @@ desktop-clock-go/
 └── DesktopClockGo.exe         构建产物，不入库
 ```
 
-源码共约 1842 行（不含测试），测试 418 行。
+源码共约 1861 行（不含测试），测试 418 行。
 
 ## 构建
 
 ```bash
 # 一次性：生成图标资源（之后 go build 会自动链接 .syso）
 go install github.com/tc-hib/go-winres@latest
-go-winres simply --icon icon.ico --manifest gui \
+go-winres simply --icon icon.ico --manifest none \
     --product-name "桌面时钟" --product-version "1.0.0.0" \
     --file-version "1.0.0.0" --file-description "Windows 桌面时钟"
 
@@ -75,6 +75,11 @@ CGO_ENABLED=0 go build -trimpath -ldflags "-H windowsgui -s -w" -o DesktopClockG
 或直接双击 `build.bat`。
 
 `-H windowsgui` 必不可少：否则生成的控制台子系统程序双击会附带一个黑框窗口。
+
+`--manifest none` 也是刻意的：go-winres 的 `gui` 清单会顺带打开 DPI 感知，
+那会让窗口改按物理像素绘制——在 125%/150% 缩放的屏幕上，时钟会明显变小、位置也偏，
+等于悄悄改掉用户已经习惯的样子。要开 DPI 感知应当单独做一次改动（连坐标换算一起调），
+不该混在构建脚本里。
 
 ## 测试
 

@@ -43,7 +43,7 @@ if not exist rsrc_windows_amd64.syso (
         exit /b 1
     )
     echo [图标] 生成资源文件 ...
-    go-winres simply --icon icon.ico --manifest gui --product-name "桌面时钟" --product-version "1.0.0.0" --file-version "1.0.0.0" --file-description "Windows 桌面时钟"
+    go-winres simply --icon icon.ico --manifest none --product-name "桌面时钟" --product-version "1.0.0.0" --file-version "1.0.0.0" --file-description "Windows 桌面时钟"
     if errorlevel 1 (
         echo [错误] 资源生成失败
         pause

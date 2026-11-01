@@ -35,9 +35,10 @@ type Clock struct {
 	dragging           bool
 	dragOffX, dragOffY int
 
-	nid        NOTIFYICONDATAW
-	trayRetry  int // 托盘登记失败次数，成功即归零
-	custColors [16]uint32
+	nid          NOTIFYICONDATAW
+	trayRetry    int // 托盘登记失败次数，成功即归零
+	promoteTries int // 等待任务栏写入登记记录的重试次数，见 maxPromoteWait
+	custColors   [16]uint32
 }
 
 // newClock 构造并启动时钟窗口，只返回成败。
@@ -88,7 +89,7 @@ func newClock() error {
 func loadAppIcon() uintptr {
 	exe := exePath()
 
-	// exe 已用 -ldflags -H=windowsgui + rsrc 嵌入图标时，ExtractIconW 能直接取到
+	// exe 内嵌了图标资源（rsrc_*.syso）时，ExtractIconW 能直接从 exe 里取到
 	if h, _, _ := pExtractIconW.Call(0, uintptr(unsafe.Pointer(utf16Ptr(exe))), 0); h > 1 {
 		return h
 	}
@@ -166,13 +167,16 @@ func (c *Clock) createWindow() error {
 
 // ---------- 字体 ----------
 
-func (c *Clock) createFont() {
-	if c.hfont != 0 {
-		pDeleteObject.Call(c.hfont)
-	}
+// logFont 把当前配置翻译成 LOGFONTW。
+//
+// 建字体和打开字体对话框都要用它：两处各写一遍的话，改了字号单位这儿忘了那儿，
+// 就会出现"对话框里显示的字体和屏幕上画的不一致"这种很难查的问题。
+func (c *Clock) logFont() LOGFONTW {
 	var lf LOGFONTW
-	lf.LfHeight = -int32(c.cfg.FontSize) // 负值 = 字符高度（不含内部行距）
-	lf.LfWeight = 400                    // 400 = FW_NORMAL
+	// LfHeight 取负值表示"字符高度"（正值是整行高度，含行距）。
+	// 配置里存的是正数，用的时候取负，两处语义不会打架。
+	lf.LfHeight = -int32(c.cfg.FontSize)
+	lf.LfWeight = 400 // 400 = FW_NORMAL
 	if c.cfg.FontWeight == "bold" {
 		lf.LfWeight = 700 // 700 = FW_BOLD
 	}
@@ -180,9 +184,17 @@ func (c *Clock) createFont() {
 		lf.LfItalic = 1
 	}
 	copyUTF16(lf.LfFaceName[:], c.cfg.FontFamily)
+	return lf
+}
 
-	h, _, _ := pCreateFontIndirectW.Call(uintptr(unsafe.Pointer(&lf)))
-	c.hfont = h
+// createFont 按当前配置重建字体。
+// 创建失败时 hfont 为 0，绘制会退回系统默认字体——难看但不会崩，所以不报错。
+func (c *Clock) createFont() {
+	if c.hfont != 0 {
+		pDeleteObject.Call(c.hfont)
+	}
+	lf := c.logFont()
+	c.hfont, _, _ = pCreateFontIndirectW.Call(uintptr(unsafe.Pointer(&lf)))
 }
 
 // ---------- 尺寸自适应 ----------

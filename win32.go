@@ -201,15 +201,19 @@ const (
 	CF_NOSCRIPTSEL         = 0x00800000
 
 	// 注册表
-	HKEY_CURRENT_USER    = 0x80000001
-	KEY_QUERY_VALUE      = 0x0001
-	KEY_SET_VALUE        = 0x0002
-	KEY_ALL_ACCESS       = 0xF003F // 含 DELETE，删子键必须
-	REG_SZ               = 1
-	REG_DWORD            = 4
-	ERROR_SUCCESS        = 0
-	ERROR_FILE_NOT_FOUND = 2
-	ERROR_NO_MORE_ITEMS  = 259 // RegEnumKeyExW 枚举结束
+	//
+	// HKEY_CURRENT_USER 真值是 (HKEY)(LONG)0x80000001：64 位下是个负数句柄，必须
+	// 符号扩展成全 1 高位。直接写 0x80000001 会变成 0x0000000080000001，
+	// RegOpenKeyExW 一律返回 ERROR_INVALID_HANDLE。
+	HKEY_CURRENT_USER    uintptr = 0xFFFFFFFF80000001
+	KEY_QUERY_VALUE              = 0x0001
+	KEY_SET_VALUE                = 0x0002
+	KEY_ALL_ACCESS               = 0xF003F // 含 DELETE，删子键必须
+	REG_SZ                       = 1
+	REG_DWORD                    = 4
+	ERROR_SUCCESS                = 0
+	ERROR_FILE_NOT_FOUND         = 2
+	ERROR_NO_MORE_ITEMS          = 259 // RegEnumKeyExW 枚举结束
 
 	// GetFileAttributesW 失败时的返回值（即 (DWORD)-1）
 	INVALID_FILE_ATTRIBUTES = 0xFFFFFFFF

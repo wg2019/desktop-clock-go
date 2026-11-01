@@ -96,7 +96,7 @@ func auditTrayRecords(selfExe string) trayAudit {
 func openNotifyIconSettings() (uintptr, bool) {
 	var hKey uintptr
 	ret, _, _ := pRegOpenKeyExW.Call(
-		hkeyCurrentUser,
+		HKEY_CURRENT_USER,
 		uintptr(unsafe.Pointer(utf16Ptr(notifyIconSettingsPath))),
 		0,
 		KEY_ALL_ACCESS, // 需要 DELETE 权限才能删子键，KEY_ALL_ACCESS 已包含
@@ -153,9 +153,9 @@ func queryRegDword(parent uintptr, subKey, value string) uint32 {
 	}
 	defer pRegCloseKey.Call(hKey)
 
-	var typ, size uint32
+	var typ uint32
+	size := uint32(4) // 先声明好缓冲区大小，RegQueryValueExW 只回填不超过这个长度的数据
 	var data uint32
-	size = 4
 	ret, _, _ = pRegQueryValueExW.Call(
 		hKey,
 		uintptr(unsafe.Pointer(utf16Ptr(value))),
@@ -209,7 +209,7 @@ func listSubKeys(hKey uintptr) []string {
 			uintptr(unsafe.Pointer(&size)),
 			0, 0, 0, 0,
 		)
-		if ret == ERROR_NO_MORE_ITEMS || ret != ERROR_SUCCESS {
+		if ret != ERROR_SUCCESS { // ERROR_NO_MORE_ITEMS 表示枚举到头
 			break
 		}
 		out = append(out, utf16ToString(buf[:size]))

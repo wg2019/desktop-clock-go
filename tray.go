@@ -37,6 +37,13 @@ const trayRepairDelay = 2500
 // 等一会儿再试基本都能成功；连续失败到这个次数才认定是真的出问题。
 const maxTrayRetry = 3
 
+// maxPromoteWait 是「等任务栏把登记记录写进注册表」的最大重试次数。
+//
+// 首次运行时任务栏要过几百毫秒才落盘那条记录；正常一两秒内就能等到。
+// 一直等不到说明这台机器不会写（例如被组策略挡住），再加定时器也是白枚举注册表，
+// 所以设上限，超了就放弃——图标此时多半仍在溢出区里，用户还能手动放行。
+const maxPromoteWait = 5
+
 // setupTray 把图标登记到任务栏，返回是否成功。
 //
 // 先 NIM_DELETE 再 NIM_ADD：explorer 重启后旧图标已随任务栏消失（DELETE 失败无害），
@@ -55,7 +62,7 @@ func (c *Clock) setupTray() bool {
 	if r, _, _ := pShellNotifyIconW.Call(NIM_ADD, uintptr(unsafe.Pointer(&c.nid))); r != 0 {
 		c.trayRetry = 0
 		pKillTimer.Call(c.hwnd, timerTrayRetry)
-		c.settleTrayPromote()
+		c.ensureTrayVisible()
 		return true
 	}
 
@@ -76,33 +83,36 @@ func (c *Clock) removeTray() {
 	}
 }
 
-// settleTrayPromote 把登记记录改成「常显」。
+// ensureTrayVisible 保证图标是「常显」的。
 //
-// 折叠的图标在这台机器上根本不会出现在任务栏（连 ^ 都没有），所以必须改；
-// 而任务栏是按记录里的值决定摆在哪，改完得重新登记一次才会重新读取。
+// Win11 默认把新程序的图标折叠进溢出区，而折叠的方法在这台机器上根本找不到入口
+// （任务栏连 "^" 都不出现），等于图标彻底消失、右键菜单也进不去。所以登记成功后
+// 主动把本程序的记录改成常显，再重新挂一次让任务栏重新读取。
 //
-// 首次运行那一刻任务栏往往还没把记录写进注册表，这时先挂个定时器稍后再补。
-func (c *Clock) settleTrayPromote() {
+// 两种情况需要等一等：首次运行那一刻任务栏还没把记录写进注册表（found=false）。
+func (c *Clock) ensureTrayVisible() {
 	changed, found := promoteTrayIcon(exePath())
 	switch {
 	case changed:
-		c.reregisterTray()
-	case !found:
-		pSetTimer.Call(c.hwnd, timerTrayPromote, 800, 0)
+		c.promoteTries = 0
+		c.readdIcon()
+	case found:
+		c.promoteTries = 0 // 已经是常显，什么都不用做
+	default:
+		if c.promoteTries < maxPromoteWait {
+			c.promoteTries++
+			pSetTimer.Call(c.hwnd, timerTrayPromote, 800, 0)
+		}
 	}
 }
 
-// reregisterTray 重新登记图标：先删再添，让任务栏重新读一遍记录。
+// readdIcon 先删再添，让任务栏重新读一遍登记记录。
 //
-// 用于两种情况：刚把记录改成「常显」；以及启动后补登记（任务栏可能把第一次
-// 请求静默丢掉了，见 trayRepairDelay）。
-func (c *Clock) reregisterTray() {
+// 也用于启动后的补登记：任务栏有时会把第一次请求静默丢掉（返回成功、图标不出现、
+// 记录也不写），过几秒无条件重挂一次就能救回来。
+func (c *Clock) readdIcon() {
 	pShellNotifyIconW.Call(NIM_DELETE, uintptr(unsafe.Pointer(&c.nid)))
 	pShellNotifyIconW.Call(NIM_ADD, uintptr(unsafe.Pointer(&c.nid)))
-	if changed, _ := promoteTrayIcon(exePath()); changed {
-		pShellNotifyIconW.Call(NIM_DELETE, uintptr(unsafe.Pointer(&c.nid)))
-		pShellNotifyIconW.Call(NIM_ADD, uintptr(unsafe.Pointer(&c.nid)))
-	}
 }
 
 // ---------- 右键菜单 ----------

@@ -32,16 +32,16 @@ type Config struct {
 const (
 	regPath = `Software\Microsoft\Windows\CurrentVersion\Run`
 	regName = "DesktopClock"
-
-	// HKEY_CURRENT_USER 是 (HKEY)(LONG)0x80000001，64 位下需符号扩展为全 1 高位。
-	// 直接写 0x80000001 会变成 0x0000000080000001，RegOpenKeyExW 会返回 ERROR_INVALID_HANDLE。
-	hkeyCurrentUser uintptr = 0xFFFFFFFF80000001
 )
+
+// defaultColor 是出厂文字色（霓虹绿）。配置缺失、颜色写得不成样子时都用它兜底，
+// 所以写在一处，免得改配色时要满文件搜十六进制。
+const defaultColor = "#39FF14"
 
 func defaultConfig() *Config {
 	return &Config{
 		HourFormat:   "24",
-		Color:        "#39FF14",
+		Color:        defaultColor,
 		FontFamily:   "Consolas",
 		FontSize:     48,
 		FontWeight:   "bold",
@@ -103,7 +103,7 @@ func saveConfig(cfg *Config) error {
 func getAutostart() bool {
 	var hKey uintptr
 	ret, _, _ := pRegOpenKeyExW.Call(
-		hkeyCurrentUser,
+		HKEY_CURRENT_USER,
 		uintptr(unsafe.Pointer(utf16Ptr(regPath))),
 		0,
 		KEY_QUERY_VALUE,
@@ -129,7 +129,7 @@ func getAutostart() bool {
 func setAutostart(enable bool) bool {
 	var hKey uintptr
 	ret, _, _ := pRegOpenKeyExW.Call(
-		hkeyCurrentUser,
+		HKEY_CURRENT_USER,
 		uintptr(unsafe.Pointer(utf16Ptr(regPath))),
 		0,
 		KEY_SET_VALUE,
@@ -141,6 +141,9 @@ func setAutostart(enable bool) bool {
 	defer pRegCloseKey.Call(hKey)
 
 	if enable {
+		// 路径里连目录分隔符都没有，说明拿到的是个光秃秃的文件名（异常环境）。
+		// 这种值写进 Run 项，下回开机也定位不到程序，不如直接判定失败，
+		// 免得用户在菜单里看到"已勾选"却永远等不到自启。
 		if !strings.Contains(exePath(), "\\") {
 			return false
 		}
@@ -167,17 +170,16 @@ func setAutostart(enable bool) bool {
 
 // ---------- 颜色工具 ----------
 
-// parseColor 把 "#RRGGBB" 解析为 (r,g,b)；格式非法时退回绿色，避免启动即崩。
-func parseColor(s string) (int, int, int) {
-	s = strings.TrimPrefix(s, "#")
-	if len(s) != 6 {
-		return 0x39, 0xFF, 0x14
+// parseColor 把 "#RRGGBB" 解析为 (r,g,b)；格式非法时退回默认色，避免启动即崩。
+func parseColor(s string) (r, g, b int) {
+	h := strings.TrimPrefix(s, "#")
+	if len(h) == 6 {
+		if v, err := strconv.ParseUint(h, 16, 32); err == nil {
+			return int(v >> 16 & 0xFF), int(v >> 8 & 0xFF), int(v & 0xFF)
+		}
 	}
-	v, err := strconv.ParseUint(s, 16, 32)
-	if err != nil {
-		return 0x39, 0xFF, 0x14
-	}
-	return int(v >> 16 & 0xFF), int(v >> 8 & 0xFF), int(v & 0xFF)
+	r, g, b = parseColor(defaultColor) // defaultColor 是写死的合法值，不会递归
+	return r, g, b
 }
 
 // toColorRef 转 Win32 的 COLORREF（0x00BBGGRR，注意与 RGB 字节序相反）。

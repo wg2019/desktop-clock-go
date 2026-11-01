@@ -218,8 +218,8 @@ func TestNegPtr(t *testing.T) {
 
 // TestHKeyCurrentUser HKEY_CURRENT_USER 是 32 位负数扩展，写错会 ERROR_INVALID_HANDLE。
 func TestHKeyCurrentUser(t *testing.T) {
-	if hkeyCurrentUser != 0xFFFFFFFF80000001 {
-		t.Errorf("HKEY_CURRENT_USER = 0x%X, 期望 0xFFFFFFFF80000001", hkeyCurrentUser)
+	if HKEY_CURRENT_USER != 0xFFFFFFFF80000001 {
+		t.Errorf("HKEY_CURRENT_USER = 0x%X, 期望 0xFFFFFFFF80000001", HKEY_CURRENT_USER)
 	}
 }
 

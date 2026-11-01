@@ -37,16 +37,7 @@ func (c *Clock) ensureCustColors() {
 // 关键点：lfItalic 必须双向同步 —— 进去时把当前状态填进 LOGFONTW，
 // 回来时再把 lfItalic 读回配置，否则会出现"勾了斜体却不生效"。
 func (c *Clock) chooseFont() {
-	var lf LOGFONTW
-	lf.LfHeight = -int32(c.cfg.FontSize)
-	lf.LfWeight = 400
-	if c.cfg.FontWeight == "bold" {
-		lf.LfWeight = 700
-	}
-	if c.cfg.Italic {
-		lf.LfItalic = 1
-	}
-	copyUTF16(lf.LfFaceName[:], c.cfg.FontFamily)
+	lf := c.logFont()
 
 	var cf CHOOSEFONTW
 	cf.LStructSize = uint32(unsafe.Sizeof(cf))

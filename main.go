@@ -129,12 +129,12 @@ func wndProc(hwnd, msg, wparam, lparam uintptr) uintptr {
 			}
 			if wparam == timerTrayPromote {
 				pKillTimer.Call(hwnd, timerTrayPromote)
-				c.settleTrayPromote()
+				c.ensureTrayVisible()
 				return 0
 			}
 			if wparam == timerTrayRepair {
 				pKillTimer.Call(hwnd, timerTrayRepair)
-				c.reregisterTray()
+				c.readdIcon()
 				return 0
 			}
 			c.keepOnDesktop()
