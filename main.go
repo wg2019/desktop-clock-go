@@ -45,6 +45,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	// 托盘图标的登记记录是按 exe 完整路径存的：换个目录运行一次，系统就多记一条
+	// 同名「桌面时钟」，而删掉的副本留下的记录不会自己消失。
+	// 这里清掉指向已删除文件的死记录；若还有别的副本仍在，提示用户只留一份。
+	// 放在建窗口之后，是为了让时钟先出来，弹窗不会挡住启动。
+	if a := auditTrayRecords(exePath()); len(a.Others) > 0 {
+		showAlert("桌面时钟", duplicateCopyMessage(exePath(), a.Others))
+	}
+
 	messageLoop()
 }
 
@@ -147,6 +155,12 @@ func showError(title, text string) {
 
 func showInfo(title, text string) {
 	showMessageBox(title, text, MB_ICONINFORMATION)
+}
+
+// showAlert 用于启动期必须让用户看见的提示（例如检测到重复副本）。
+// 加置顶 + 抢前台：开机自启拉起的进程没有前台权限，普通弹窗会被埋在窗口后面。
+func showAlert(title, text string) {
+	showMessageBox(title, text, MB_ICONINFORMATION|MB_SETFOREGROUND|MB_TOPMOST)
 }
 
 // showMessageBox 的 uType 传 MB_ICON*；hwnd 传 0 = 无父窗口的独立对话框。

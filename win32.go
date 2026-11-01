@@ -28,8 +28,9 @@ var (
 // ---------- 过程 ----------
 var (
 	// kernel32
-	pGetModuleHandleW = kernel32.NewProc("GetModuleHandleW")
-	pCreateMutexW     = kernel32.NewProc("CreateMutexW")
+	pGetModuleHandleW   = kernel32.NewProc("GetModuleHandleW")
+	pCreateMutexW       = kernel32.NewProc("CreateMutexW")
+	pGetFileAttributesW = kernel32.NewProc("GetFileAttributesW")
 
 	// user32 — 窗口
 	pRegisterClassExW      = user32.NewProc("RegisterClassExW")
@@ -98,11 +99,13 @@ var (
 	pChooseColorW = comdlg32.NewProc("ChooseColorW")
 	pChooseFontW  = comdlg32.NewProc("ChooseFontW")
 
-	// advapi32 — 注册表（开机自启）
+	// advapi32 — 注册表（开机自启、托盘图标登记记录）
 	pRegOpenKeyExW    = advapi32.NewProc("RegOpenKeyExW")
 	pRegSetValueExW   = advapi32.NewProc("RegSetValueExW")
 	pRegQueryValueExW = advapi32.NewProc("RegQueryValueExW")
 	pRegDeleteValueW  = advapi32.NewProc("RegDeleteValueW")
+	pRegEnumKeyExW    = advapi32.NewProc("RegEnumKeyExW")
+	pRegDeleteKeyW    = advapi32.NewProc("RegDeleteKeyW")
 	pRegCloseKey      = advapi32.NewProc("RegCloseKey")
 )
 
@@ -180,9 +183,13 @@ const (
 	IDC_ARROW       = 32512
 	IDI_APPLICATION = 32512
 
-	// MessageBox 图标
+	// MessageBox 图标与行为
 	MB_ICONERROR       = 0x00000010
 	MB_ICONINFORMATION = 0x00000040
+	// 启动期警告必须置顶：进程由开机自启拉起时没有前台权限，
+	// 普通弹窗会被前台窗口盖住，用户永远看不到。
+	MB_SETFOREGROUND = 0x00010000
+	MB_TOPMOST       = 0x00040000
 
 	// 对话框标志
 	CC_RGBINIT             = 0x00000001
@@ -194,9 +201,14 @@ const (
 	HKEY_CURRENT_USER    = 0x80000001
 	KEY_QUERY_VALUE      = 0x0001
 	KEY_SET_VALUE        = 0x0002
+	KEY_ALL_ACCESS       = 0xF003F // 含 DELETE，删子键必须
 	REG_SZ               = 1
 	ERROR_SUCCESS        = 0
 	ERROR_FILE_NOT_FOUND = 2
+	ERROR_NO_MORE_ITEMS  = 259 // RegEnumKeyExW 枚举结束
+
+	// GetFileAttributesW 失败时的返回值（即 (DWORD)-1）
+	INVALID_FILE_ATTRIBUTES = 0xFFFFFFFF
 
 	// 单实例：CreateMutexW 创建的是已存在的同名互斥体时返回此错误码
 	ERROR_ALREADY_EXISTS = 183
