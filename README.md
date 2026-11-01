@@ -32,17 +32,18 @@ Windows 11 桌面时钟。贴在桌面上、永远位于所有应用窗口之下
 | 桌面层 | 贴在桌面上、压在所有应用之下，点它不抢焦点 |
 | 防重复启动 | 命名互斥体（`Local\DesktopClockSingleInstance`），第二个实例提示后自行退出 |
 | 托盘记录自愈 | 启动时删掉指向已删除文件的旧登记记录；发现仍有其他副本时置顶提示 |
+| 托盘图标自愈 | 监听 `TaskbarCreated`，资源管理器重启后自动把图标登记回去 |
 
 ## 文件结构
 
 ```
 desktop-clock-go/
 ├── go.mod                     module desktopclock（无第三方依赖）
-├── main.go                    入口：LockOSThread + 单实例检查 + 消息循环 + wndProc   200 行
-├── win32.go                   DLL/常量/结构体声明 + 编译期尺寸断言                   420 行
+├── main.go                    入口：LockOSThread + 单实例检查 + 消息循环 + wndProc   225 行
+├── win32.go                   DLL/常量/结构体声明 + 编译期尺寸断言                   423 行
 ├── config.go                  JSON 配置 + 注册表自启（advapi32）+ 颜色工具           200 行
-├── clock.go                   窗口/字体/绘制/桌面层级/拖动/自检                       407 行
-├── tray.go                    托盘图标 + 右键菜单 + 命令分发                          124 行
+├── clock.go                   窗口/字体/绘制/桌面层级/拖动/自检                       408 行
+├── tray.go                    托盘图标 + 右键菜单 + 命令分发                          150 行
 ├── trayrecords.go             托盘登记记录的清理与副本检测                            199 行
 ├── dialog.go                  ChooseColorW / ChooseFontW                              85 行
 ├── clock_test.go              单元测试（20 个用例）                                  311 行
@@ -56,7 +57,7 @@ desktop-clock-go/
 └── DesktopClockGo.exe         构建产物，不入库
 ```
 
-源码共约 1635 行（不含测试），测试 418 行。
+源码共约 1690 行（不含测试），测试 418 行。
 
 ## 构建
 
@@ -162,6 +163,29 @@ Win11 把「托盘里有哪些图标、是否常显」记在
 - 枚举时**先收集全部子键名再删**。边枚举边删会让后续索引整体前移，漏掉条目。
 - 提示框必须带 `MB_TOPMOST | MB_SETFOREGROUND`。开机自启拉起的进程没有前台权限，
   普通 MessageBox 会被前台窗口盖住 —— 第一次实测时就踩到了，截图里完全看不到弹窗。
+
+### 6. explorer 重启会清空所有人的托盘图标
+
+托盘图标不是程序自己画的，是**登记给任务栏**的。任务栏属于 `explorer.exe`，它一退出
+（崩溃恢复、注销重登、装完软件自动重启、手工"重新启动资源管理器"），那些登记就全没了。
+
+系统会在这时候广播一条注册消息 **`TaskbarCreated`**，标准做法是收到后重新
+`Shell_NotifyIcon(NIM_ADD)` 一次。漏了这一步的现象是：**程序明明还在跑、时钟也还在画，
+托盘图标却凭空消失，直到重启程序才回来** —— 而且完全没有报错可查。
+
+```go
+// 注册消息的数值由系统动态分配，只能运行期取，不能写成 case 常量
+taskbarCreatedMsg, _, _ = pRegisterWindowMessageW.Call(
+    uintptr(unsafe.Pointer(utf16Ptr("TaskbarCreated"))))
+```
+
+`wndProc` 里在 `switch` 之前拦这条消息（它的值不是编译期常量，进不了 `case`），
+命中就重新登记。登记前先 `NIM_DELETE` 再 `NIM_ADD`，重复调用才不会因为"图标已存在"失败；
+失败则挂一个 1.5 秒的定时器重试（explorer 刚起来时任务栏还没准备好），连续失败才弹窗。
+
+顺带一个不能靠代码解决的坑：**explorer 自己的托盘状态也会卡死**。这时新加的任何图标都
+不会出现，连任务栏上的"^"折叠按钮都没有，`Shell_NotifyIcon` 却返回成功、注册表里也照常
+写下记录 —— 只能重启 explorer 恢复。排查时用截图对比最可靠：加图标前后各截一张任务栏。
 
 ## 托盘菜单
 

@@ -75,6 +75,9 @@ var (
 	pLoadIconW      = user32.NewProc("LoadIconW")
 	pLoadImageW     = user32.NewProc("LoadImageW")
 
+	// user32 — 广播消息（explorer 重建任务栏时用它通知所有程序）
+	pRegisterWindowMessageW = user32.NewProc("RegisterWindowMessageW")
+
 	// user32 — 菜单
 	pCreatePopupMenu     = user32.NewProc("CreatePopupMenu")
 	pAppendMenuW         = user32.NewProc("AppendMenuW")

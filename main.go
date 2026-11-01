@@ -15,6 +15,10 @@ var (
 	// wndProcCb 由 syscall.NewCallback 生成，注册窗口类时要传这个地址。
 	// 在 init 里创建一次即可（每次 NewCallback 都会占用一个回调槽位）。
 	wndProcCb uintptr
+
+	// taskbarCreatedMsg 是 explorer 重建任务栏后广播的注册消息。
+	// 注册消息的数值由系统动态分配，所以只能在运行期取，不能写成常量。
+	taskbarCreatedMsg uintptr
 )
 
 func init() {
@@ -26,6 +30,13 @@ func main() {
 	// Go 的 goroutine 会被调度到不同线程上，不加锁的典型症状是：
 	// 窗口能显示，但鼠标点不动、托盘菜单弹不出来、定时器不触发——而且完全不报错。
 	runtime.LockOSThread()
+
+	// 注册 explorer 的"任务栏已重建"广播消息。explorer 重启后系统会清空
+	// 所有托盘图标并广播这条消息，程序必须收到后重新登记，否则图标会一直
+	// 消失到下次启动（这是托盘类程序必做的一步，漏了就会出现"图标自己没了"）。
+	taskbarMsgName := utf16Ptr("TaskbarCreated")
+	taskbarCreatedMsg, _, _ = pRegisterWindowMessageW.Call(
+		uintptr(unsafe.Pointer(taskbarMsgName)))
 
 	// 必须在建窗口之前判断：否则第二个实例会先画出自己的时钟和托盘图标，
 	// 再退出，用户会看到一闪而过的残影。
@@ -44,7 +55,6 @@ func main() {
 		showError("桌面时钟启动失败", err.Error())
 		os.Exit(1)
 	}
-
 	// 托盘图标的登记记录是按 exe 完整路径存的：换个目录运行一次，系统就多记一条
 	// 同名「桌面时钟」，而删掉的副本留下的记录不会自己消失。
 	// 这里清掉指向已删除文件的死记录；若还有别的副本仍在，提示用户只留一份。
@@ -74,9 +84,19 @@ func messageLoop() {
 func wndProc(hwnd, msg, wparam, lparam uintptr) uintptr {
 	c := app
 
+	// 注册消息的数值是运行期才确定的，无法写成 case 常量，只能先单独拦一下。
+	// 放在 switch 之前，保证 explorer 重建任务栏后第一时间把图标挂回去。
+	if taskbarCreatedMsg != 0 && msg == taskbarCreatedMsg {
+		if c != nil {
+			c.setupTray()
+		}
+		return 0
+	}
+
 	switch msg {
 	case WM_DESTROY:
-		pKillTimer.Call(hwnd, 1)
+		pKillTimer.Call(hwnd, timerTick)
+		pKillTimer.Call(hwnd, timerTrayRetry)
 		if c != nil {
 			c.removeTray()
 		}
@@ -101,6 +121,11 @@ func wndProc(hwnd, msg, wparam, lparam uintptr) uintptr {
 
 	case WM_TIMER:
 		if c != nil {
+			if wparam == timerTrayRetry {
+				pKillTimer.Call(hwnd, timerTrayRetry)
+				c.setupTray()
+				return 0
+			}
 			c.keepOnDesktop()
 			pInvalidateRect.Call(hwnd, 0, 1)
 		}

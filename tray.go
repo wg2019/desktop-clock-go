@@ -17,7 +17,22 @@ const (
 
 // ---------- 托盘图标 ----------
 
-func (c *Clock) setupTray() {
+// 定时器 ID。区分开是为了在 WM_TIMER 里辨认是哪个定时器到点了。
+const (
+	timerTick      = 1 // 每秒一次：刷新时间 + 层级自检
+	timerTrayRetry = 2 // 托盘登记失败后的重试
+)
+
+// maxTrayRetry 是托盘登记的最大重试次数。
+// explorer 重启后任务栏要过几百毫秒才准备好，期间 Shell_NotifyIcon 会失败，
+// 等一会儿再试基本都能成功；连续失败到这个次数才认定是真的出问题。
+const maxTrayRetry = 3
+
+// setupTray 把图标登记到任务栏，返回是否成功。
+//
+// 先 NIM_DELETE 再 NIM_ADD：explorer 重启后旧图标已随任务栏消失（DELETE 失败无害），
+// 但如果是自己重复调用，先删能避免"图标已存在"导致 ADD 失败。
+func (c *Clock) setupTray() bool {
 	c.nid = NOTIFYICONDATAW{}
 	c.nid.CbSize = uint32(unsafe.Sizeof(c.nid)) // 必须是 976（已由编译期断言保证）
 	c.nid.Hwnd = c.hwnd
@@ -27,11 +42,22 @@ func (c *Clock) setupTray() {
 	c.nid.HIcon = c.hicon
 	copyUTF16(c.nid.SzTip[:], "桌面时钟")
 
-	if r, _, _ := pShellNotifyIconW.Call(NIM_ADD, uintptr(unsafe.Pointer(&c.nid))); r == 0 {
-		// 编译成 -H windowsgui 后没有控制台，只能靠弹窗告知；
-		// 托盘没了等于菜单没了，用户需要知道该改 config.json。
-		showError("桌面时钟", "托盘图标创建失败。\n设置仍可通过编辑 config.json 调整。")
+	pShellNotifyIconW.Call(NIM_DELETE, uintptr(unsafe.Pointer(&c.nid)))
+	if r, _, _ := pShellNotifyIconW.Call(NIM_ADD, uintptr(unsafe.Pointer(&c.nid))); r != 0 {
+		c.trayRetry = 0
+		pKillTimer.Call(c.hwnd, timerTrayRetry)
+		return true
 	}
+
+	if c.trayRetry < maxTrayRetry {
+		c.trayRetry++
+		pSetTimer.Call(c.hwnd, timerTrayRetry, 1500, 0)
+		return false
+	}
+	// 编译成 -H windowsgui 后没有控制台，只能靠弹窗告知；
+	// 托盘没了等于菜单没了，用户需要知道还能改 config.json。
+	showError("桌面时钟", "托盘图标创建失败。\n设置仍可通过编辑 config.json 调整。")
+	return false
 }
 
 func (c *Clock) removeTray() {

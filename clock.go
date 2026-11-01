@@ -36,6 +36,7 @@ type Clock struct {
 	dragOffX, dragOffY int
 
 	nid        NOTIFYICONDATAW
+	trayRetry  int // 托盘登记失败次数，成功即归零
 	custColors [16]uint32
 }
 
@@ -73,7 +74,7 @@ func newClock() error {
 
 	c.applyLayer()
 	c.setupTray()
-	pSetTimer.Call(c.hwnd, 1, 1000, 0) // 每秒一次：刷新时间 + 自检层级
+	pSetTimer.Call(c.hwnd, timerTick, 1000, 0) // 每秒一次：刷新时间 + 自检层级
 
 	return nil
 }
