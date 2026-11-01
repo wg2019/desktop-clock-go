@@ -1,0 +1,13 @@
+# 统一换行符，避免 Windows 上出现满屏 CRLF 警告
+* text=auto
+
+*.go     text eol=lf
+*.mod    text eol=lf
+*.md     text eol=lf
+*.json   text eol=lf
+*.bat    text eol=crlf
+
+# 二进制资源，禁止 git 做换行转换
+*.exe    binary
+*.ico    binary
+*.syso   binary

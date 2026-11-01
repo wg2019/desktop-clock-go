@@ -1,0 +1,14 @@
+# ---------- 构建产物 ----------
+DesktopClockGo.exe
+*.exe
+dist/
+
+# ---------- 本机配置 ----------
+# config.json 含本机窗口坐标、字体等个人设置，用 config.example.json 作模板
+config.json
+
+# ---------- 其它 ----------
+*.log
+*.tmp
+Thumbs.db
+desktop.ini
