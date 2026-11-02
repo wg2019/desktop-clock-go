@@ -83,13 +83,15 @@ func (c *Clock) removeTray() {
 	}
 }
 
-// ensureTrayVisible 保证图标是「常显」的。
+// ensureTrayVisible 在用户还没表态时，保证图标是「常显」的。
 //
 // Win11 默认把新程序的图标折叠进溢出区，而折叠的方法在这台机器上根本找不到入口
-// （任务栏连 "^" 都不出现），等于图标彻底消失、右键菜单也进不去。所以登记成功后
-// 主动把本程序的记录改成常显，再重新挂一次让任务栏重新读取。
+// （任务栏连 "^" 都不出现），等于图标彻底消失、右键菜单也进不去。所以记录从未表态
+// 时主动改成常显，再重新挂一次让任务栏重新读取。
 //
-// 两种情况需要等一等：首次运行那一刻任务栏还没把记录写进注册表（found=false）。
+// 用户在系统设置里关掉过的话，这次什么都不做 —— 那是他的选择，见 shouldPromote。
+//
+// 另一种情况需要等一等：首次运行那一刻任务栏还没把记录写进注册表（found=false）。
 func (c *Clock) ensureTrayVisible() {
 	changed, found := promoteTrayIcon(exePath())
 	switch {
@@ -97,7 +99,7 @@ func (c *Clock) ensureTrayVisible() {
 		c.promoteTries = 0
 		c.readdIcon()
 	case found:
-		c.promoteTries = 0 // 已经是常显，什么都不用做
+		c.promoteTries = 0 // 已是常显，或用户明确关掉了：都不该再动
 	default:
 		if c.promoteTries < maxPromoteWait {
 			c.promoteTries++

@@ -23,7 +23,11 @@ import (
 const (
 	notifyIconSettingsPath = `Control Panel\NotifyIconSettings`
 	execPathValue          = "ExecutablePath"
-	promotedValue          = "IsPromoted" // 1 = 常显在任务栏，0/缺失 = 折叠进溢出区
+	// IsPromoted 有三种状态，缺一不可区分：
+	//   值不存在 → 任务栏按默认策略折叠（用户从未表态）
+	//   = 1      → 常显在任务栏
+	//   = 0      → 用户主动在「设置 > 任务栏 > 其他系统托盘图标」里关掉了
+	promotedValue = "IsPromoted"
 )
 
 // recordKind 是一条托盘登记记录相对于「当前运行的程序」的分类。
@@ -108,12 +112,14 @@ func openNotifyIconSettings() (uintptr, bool) {
 	return hKey, true
 }
 
-// promoteTrayIcon 把本程序的登记记录标记为「常显」。
+// promoteTrayIcon 在「用户还没表态」时把本程序的记录标记为「常显」。
 //
 // Win11 默认把新程序的图标折叠进溢出区。折叠状态本该能在任务栏的 "^" 里找到，
 // 但实测这台机器上折叠的图标连 "^" 都不出现 —— 等于图标彻底消失。而没有托盘图标
-// 就进不了右键菜单，程序会变得无法操作（只能手动改 config.json），所以登记成功后
-// 主动把记录改成常显，再重新登记一次让任务栏重新读取。
+// 就进不了右键菜单，程序会变得无法操作（只能手动改 config.json），所以记录从未表态
+// 时替用户改成常显，再重新登记一次让任务栏重新读取。
+//
+// 但「用户明确关掉」必须尊重，见 shouldPromote。
 //
 // 返回两个值：
 //   - changed：这次真的改动了记录，调用方需要重新登记图标
@@ -130,16 +136,33 @@ func promoteTrayIcon(selfExe string) (changed, found bool) {
 		if !strings.EqualFold(queryRegString(hKey, sub, execPathValue), selfExe) {
 			continue
 		}
-		if queryRegDword(hKey, sub, promotedValue) == 1 {
-			return false, true // 已经是常显
+		_, present := queryRegDwordState(hKey, sub, promotedValue)
+		if !shouldPromote(present) {
+			return false, true
 		}
 		return writeRegDword(hKey, sub, promotedValue, 1), true
 	}
 	return false, false
 }
 
-// queryRegDword 读取子键下的一个 REG_DWORD，不存在或类型不符时返回 0。
-func queryRegDword(parent uintptr, subKey, value string) uint32 {
+// shouldPromote 判断要不要替用户把图标改成「常显」。
+//
+// 只看 IsPromoted 存不存在，不看它的数值 —— 因为「值缺失」和「值 = 0」读出来都是 0，
+// 含义却完全相反：
+//   - 值缺失：任务栏按默认策略折叠，用户从未表态 → 替他改成常显是帮忙
+//   - = 0：用户在系统设置里亲手关掉了 → 再改回去就是对着干
+//
+// 早先的实现在这里写的是「值 != 1 就写 1」，于是每次开机都把用户关掉的图标重新
+// 打开，表现为「设置里关掉、重启后又冒出来」。注册表里 chrome、NVIDIA 这些从没
+// 设置过的程序都没有这个值，确认了「缺失 = 未表态」这个判断。
+func shouldPromote(isPromotedPresent bool) bool {
+	return !isPromotedPresent
+}
+
+// queryRegDwordState 读取子键下的一个 REG_DWORD，并区分「值不存在」和「值等于 0」。
+//
+// 返回值 present 表示读到了这个值；不存在或类型不符时为 false。
+func queryRegDwordState(parent uintptr, subKey, value string) (data uint32, present bool) {
 	var hKey uintptr
 	ret, _, _ := pRegOpenKeyExW.Call(
 		parent,
@@ -149,13 +172,12 @@ func queryRegDword(parent uintptr, subKey, value string) uint32 {
 		uintptr(unsafe.Pointer(&hKey)),
 	)
 	if ret != ERROR_SUCCESS {
-		return 0
+		return 0, false
 	}
 	defer pRegCloseKey.Call(hKey)
 
 	var typ uint32
 	size := uint32(4) // 先声明好缓冲区大小，RegQueryValueExW 只回填不超过这个长度的数据
-	var data uint32
 	ret, _, _ = pRegQueryValueExW.Call(
 		hKey,
 		uintptr(unsafe.Pointer(utf16Ptr(value))),
@@ -165,9 +187,9 @@ func queryRegDword(parent uintptr, subKey, value string) uint32 {
 		uintptr(unsafe.Pointer(&size)),
 	)
 	if ret != ERROR_SUCCESS || typ != REG_DWORD || size != 4 {
-		return 0
+		return 0, false
 	}
-	return data
+	return data, true
 }
 
 // writeRegDword 写一个 REG_DWORD，成功返回 true。

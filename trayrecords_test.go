@@ -105,3 +105,25 @@ func TestDuplicateCopyMessageListsPaths(t *testing.T) {
 		t.Error("提示文案应指出设置里的具体位置")
 	}
 }
+
+// 用户亲手关掉的图标不能再替他打开 —— 这是「设置里关掉、重启后又冒出来」那个 bug
+// 的回归测试。关键点是「值不存在」与「值 = 0」必须区别对待：两者读出来都是 0，
+// 前者是任务栏的默认折叠（可以替他改），后者是用户的明确选择（不许动）。
+func TestShouldPromote(t *testing.T) {
+	cases := []struct {
+		name    string
+		present bool // IsPromoted 这个值在注册表里存不存在
+		want    bool
+	}{
+		{name: "值缺失：任务栏默认折叠，用户从未表态，可以替他改成常显", present: false, want: true},
+		{name: "值存在：无论 0 还是 1 都是明确状态，一律不碰", present: true, want: false},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := shouldPromote(c.present); got != c.want {
+				t.Errorf("shouldPromote(present=%v) = %v, want %v", c.present, got, c.want)
+			}
+		})
+	}
+}
