@@ -35,10 +35,9 @@ type Clock struct {
 	dragging           bool
 	dragOffX, dragOffY int
 
-	nid          NOTIFYICONDATAW
-	trayRetry    int // 托盘登记失败次数，成功即归零
-	promoteTries int // 等待任务栏写入登记记录的重试次数，见 maxPromoteWait
-	custColors   [16]uint32
+	nid        NOTIFYICONDATAW
+	trayRetry  int // 托盘登记失败次数，成功即归零
+	custColors [16]uint32
 }
 
 // newClock 构造并启动时钟窗口，只返回成败。

@@ -19,10 +19,9 @@ const (
 
 // 定时器 ID。区分开是为了在 WM_TIMER 里辨认是哪个定时器到点了。
 const (
-	timerTick        = 1 // 每秒一次：刷新时间 + 层级自检
-	timerTrayRetry   = 2 // 托盘登记失败后的重试
-	timerTrayPromote = 3 // 补登记「常显」：首次运行时记录还没落盘
-	timerTrayRepair  = 4 // 启动后补登记一次：任务栏可能把首次请求静默丢了
+	timerTick       = 1 // 每秒一次：刷新时间 + 层级自检
+	timerTrayRetry  = 2 // 托盘登记失败后的重试
+	timerTrayRepair = 3 // 启动后补登记一次：任务栏可能把首次请求静默丢了
 )
 
 // trayRepairDelay 是启动后补登记的延迟。
@@ -36,13 +35,6 @@ const trayRepairDelay = 2500
 // explorer 重启后任务栏要过几百毫秒才准备好，期间 Shell_NotifyIcon 会失败，
 // 等一会儿再试基本都能成功；连续失败到这个次数才认定是真的出问题。
 const maxTrayRetry = 3
-
-// maxPromoteWait 是「等任务栏把登记记录写进注册表」的最大重试次数。
-//
-// 首次运行时任务栏要过几百毫秒才落盘那条记录；正常一两秒内就能等到。
-// 一直等不到说明这台机器不会写（例如被组策略挡住），再加定时器也是白枚举注册表，
-// 所以设上限，超了就放弃——图标此时多半仍在溢出区里，用户还能手动放行。
-const maxPromoteWait = 5
 
 // setupTray 把图标登记到任务栏，返回是否成功。
 //
@@ -62,7 +54,6 @@ func (c *Clock) setupTray() bool {
 	if r, _, _ := pShellNotifyIconW.Call(NIM_ADD, uintptr(unsafe.Pointer(&c.nid))); r != 0 {
 		c.trayRetry = 0
 		pKillTimer.Call(c.hwnd, timerTrayRetry)
-		c.ensureTrayVisible()
 		return true
 	}
 
@@ -83,35 +74,13 @@ func (c *Clock) removeTray() {
 	}
 }
 
-// ensureTrayVisible 在用户还没表态时，保证图标是「常显」的。
-//
-// Win11 默认把新程序的图标折叠进溢出区，而折叠的方法在这台机器上根本找不到入口
-// （任务栏连 "^" 都不出现），等于图标彻底消失、右键菜单也进不去。所以记录从未表态
-// 时主动改成常显，再重新挂一次让任务栏重新读取。
-//
-// 用户在系统设置里关掉过的话，这次什么都不做 —— 那是他的选择，见 shouldPromote。
-//
-// 另一种情况需要等一等：首次运行那一刻任务栏还没把记录写进注册表（found=false）。
-func (c *Clock) ensureTrayVisible() {
-	changed, found := promoteTrayIcon(exePath())
-	switch {
-	case changed:
-		c.promoteTries = 0
-		c.readdIcon()
-	case found:
-		c.promoteTries = 0 // 已是常显，或用户明确关掉了：都不该再动
-	default:
-		if c.promoteTries < maxPromoteWait {
-			c.promoteTries++
-			pSetTimer.Call(c.hwnd, timerTrayPromote, 800, 0)
-		}
-	}
-}
-
 // readdIcon 先删再添，让任务栏重新读一遍登记记录。
 //
-// 也用于启动后的补登记：任务栏有时会把第一次请求静默丢掉（返回成功、图标不出现、
+// 用于启动后的补登记：任务栏有时会把第一次请求静默丢掉（返回成功、图标不出现、
 // 记录也不写），过几秒无条件重挂一次就能救回来。
+//
+// 注意它只重新登记图标，不碰 NotifyIconSettings 里的任何值 —— 图标常显与否
+// 完全是用户在系统设置里的权利，程序不代劳也不撤销（详见 README 的托盘一节）。
 func (c *Clock) readdIcon() {
 	pShellNotifyIconW.Call(NIM_DELETE, uintptr(unsafe.Pointer(&c.nid)))
 	pShellNotifyIconW.Call(NIM_ADD, uintptr(unsafe.Pointer(&c.nid)))

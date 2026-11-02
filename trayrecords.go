@@ -23,11 +23,6 @@ import (
 const (
 	notifyIconSettingsPath = `Control Panel\NotifyIconSettings`
 	execPathValue          = "ExecutablePath"
-	// IsPromoted 有三种状态，缺一不可区分：
-	//   值不存在 → 任务栏按默认策略折叠（用户从未表态）
-	//   = 1      → 常显在任务栏
-	//   = 0      → 用户主动在「设置 > 任务栏 > 其他系统托盘图标」里关掉了
-	promotedValue = "IsPromoted"
 )
 
 // recordKind 是一条托盘登记记录相对于「当前运行的程序」的分类。
@@ -112,111 +107,14 @@ func openNotifyIconSettings() (uintptr, bool) {
 	return hKey, true
 }
 
-// promoteTrayIcon 在「用户还没表态」时把本程序的记录标记为「常显」。
+// promoteTrayIcon、shouldPromote、queryRegDwordState 已随「自动常显」功能一起删除。
 //
-// Win11 默认把新程序的图标折叠进溢出区。折叠状态本该能在任务栏的 "^" 里找到，
-// 但实测这台机器上折叠的图标连 "^" 都不出现 —— 等于图标彻底消失。而没有托盘图标
-// 就进不了右键菜单，程序会变得无法操作（只能手动改 config.json），所以记录从未表态
-// 时替用户改成常显，再重新登记一次让任务栏重新读取。
-//
-// 但「用户明确关掉」必须尊重，见 shouldPromote。
-//
-// 返回两个值：
-//   - changed：这次真的改动了记录，调用方需要重新登记图标
-//   - found：找到了指向本程序的记录。首次运行那一刻任务栏可能还没来得及写记录，
-//     found=false 时调用方应该过一会儿再试一次
-func promoteTrayIcon(selfExe string) (changed, found bool) {
-	hKey, ok := openNotifyIconSettings()
-	if !ok {
-		return false, false
-	}
-	defer pRegCloseKey.Call(hKey)
-
-	for _, sub := range listSubKeys(hKey) {
-		if !strings.EqualFold(queryRegString(hKey, sub, execPathValue), selfExe) {
-			continue
-		}
-		_, present := queryRegDwordState(hKey, sub, promotedValue)
-		if !shouldPromote(present) {
-			return false, true
-		}
-		return writeRegDword(hKey, sub, promotedValue, 1), true
-	}
-	return false, false
-}
-
-// shouldPromote 判断要不要替用户把图标改成「常显」。
-//
-// 只看 IsPromoted 存不存在，不看它的数值 —— 因为「值缺失」和「值 = 0」读出来都是 0，
-// 含义却完全相反：
-//   - 值缺失：任务栏按默认策略折叠，用户从未表态 → 替他改成常显是帮忙
-//   - = 0：用户在系统设置里亲手关掉了 → 再改回去就是对着干
-//
-// 早先的实现在这里写的是「值 != 1 就写 1」，于是每次开机都把用户关掉的图标重新
-// 打开，表现为「设置里关掉、重启后又冒出来」。注册表里 chrome、NVIDIA 这些从没
-// 设置过的程序都没有这个值，确认了「缺失 = 未表态」这个判断。
-func shouldPromote(isPromotedPresent bool) bool {
-	return !isPromotedPresent
-}
-
-// queryRegDwordState 读取子键下的一个 REG_DWORD，并区分「值不存在」和「值等于 0」。
-//
-// 返回值 present 表示读到了这个值；不存在或类型不符时为 false。
-func queryRegDwordState(parent uintptr, subKey, value string) (data uint32, present bool) {
-	var hKey uintptr
-	ret, _, _ := pRegOpenKeyExW.Call(
-		parent,
-		uintptr(unsafe.Pointer(utf16Ptr(subKey))),
-		0,
-		KEY_QUERY_VALUE,
-		uintptr(unsafe.Pointer(&hKey)),
-	)
-	if ret != ERROR_SUCCESS {
-		return 0, false
-	}
-	defer pRegCloseKey.Call(hKey)
-
-	var typ uint32
-	size := uint32(4) // 先声明好缓冲区大小，RegQueryValueExW 只回填不超过这个长度的数据
-	ret, _, _ = pRegQueryValueExW.Call(
-		hKey,
-		uintptr(unsafe.Pointer(utf16Ptr(value))),
-		0,
-		uintptr(unsafe.Pointer(&typ)),
-		uintptr(unsafe.Pointer(&data)),
-		uintptr(unsafe.Pointer(&size)),
-	)
-	if ret != ERROR_SUCCESS || typ != REG_DWORD || size != 4 {
-		return 0, false
-	}
-	return data, true
-}
-
-// writeRegDword 写一个 REG_DWORD，成功返回 true。
-func writeRegDword(parent uintptr, subKey, value string, data uint32) bool {
-	var hKey uintptr
-	ret, _, _ := pRegOpenKeyExW.Call(
-		parent,
-		uintptr(unsafe.Pointer(utf16Ptr(subKey))),
-		0,
-		KEY_SET_VALUE,
-		uintptr(unsafe.Pointer(&hKey)),
-	)
-	if ret != ERROR_SUCCESS {
-		return false
-	}
-	defer pRegCloseKey.Call(hKey)
-
-	ret, _, _ = pRegSetValueExW.Call(
-		hKey,
-		uintptr(unsafe.Pointer(utf16Ptr(value))),
-		0,
-		REG_DWORD,
-		uintptr(unsafe.Pointer(&data)),
-		4,
-	)
-	return ret == ERROR_SUCCESS
-}
+// 历史：v1.0.0 曾在登记成功后把本程序记录的 IsPromoted 写成 1，本意是救
+// 「Win11 默认折叠、而这台机器折叠的图标连 ^ 都不出现」的急。但那个值是用户
+// 在系统设置里的选择，程序无论替他置 1 还是撤销，都是越权 —— 实测就报过
+// 「设置里关掉、重启后又自己冒出来」。所以从这一版起程序不读写 IsPromoted，
+// 常显与否完全由用户在 设置 > 个性化 > 任务栏 > 其他系统托盘图标 里决定。
+// 首次使用若看不到图标，请去那里打开（使用说明第八节有完整排查步骤）。
 
 // listSubKeys 枚举一个注册表键下的所有子键名。
 func listSubKeys(hKey uintptr) []string {
