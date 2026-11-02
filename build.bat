@@ -64,9 +64,12 @@ if not exist rsrc_windows_amd64.syso (
 )
 
 echo [编译] 开始编译 ...
-REM -H windowsgui : GUI 子系统，双击不弹控制台黑框
-REM -s -w         : 去掉符号表和调试信息，体积小约 30%%
-go build -trimpath -ldflags "-H windowsgui -s -w" -o DesktopClockGo.exe .
+REM -H windowsgui  : GUI 子系统，双击不弹控制台黑框
+REM -s -w          : 去掉符号表和调试信息，体积小约 30%%
+REM -buildvcs=false: 不把 git 提交号与 dirty 标记嵌进 exe。默认 auto 会让
+REM                  同一个源码在「工作区干净/有改动」时编出不同字节，
+REM                  发布的 md5 就成了废纸；提交信息写在 release notes 里即可
+go build -buildvcs=false -trimpath -ldflags "-H windowsgui -s -w" -o DesktopClockGo.exe .
 if errorlevel 1 (
     echo.
     echo [错误] 编译失败
