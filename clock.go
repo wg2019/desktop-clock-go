@@ -49,6 +49,16 @@ func newClock() error {
 	cfg := loadConfig()
 	cfg.Autostart = getAutostart() // 以注册表实际状态为准
 
+	// 自启项指向的路径失效会让开机自启静默失灵：菜单明明是勾选状态，开机却
+	// 找不到文件（典型场景：程序目录改名/移动，旧值原样留在注册表里）。
+	// Run 项是本程序自己维护的（值就是本程序路径），发现指向的不是当前 exe
+	// 就改写过来。这和 IsPromoted 不同 —— 那是用户在系统设置里的表态，不碰。
+	if cfg.Autostart {
+		if target, ok := autostartTarget(); ok && !sameAutostartPath(target, exePath()) {
+			setAutostart(true)
+		}
+	}
+
 	c := &Clock{
 		cfg:   cfg,
 		hicon: loadAppIcon(),

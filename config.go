@@ -101,6 +101,13 @@ func saveConfig(cfg *Config) error {
 // getAutostart 只判断自启项是否存在，不比对它的值。
 // RegQueryValueExW 的 lpData 传 NULL、只给 &size，系统就只回填长度不拷贝数据。
 func getAutostart() bool {
+	_, ok := autostartTarget()
+	return ok
+}
+
+// autostartTarget 读出自启项当前指向的程序路径（去掉包裹的引号）。
+// 第二个返回值表示这个值存不存在；值不存在时路径返回空串。
+func autostartTarget() (string, bool) {
 	var hKey uintptr
 	ret, _, _ := pRegOpenKeyExW.Call(
 		HKEY_CURRENT_USER,
@@ -110,7 +117,7 @@ func getAutostart() bool {
 		uintptr(unsafe.Pointer(&hKey)),
 	)
 	if ret != ERROR_SUCCESS {
-		return false
+		return "", false
 	}
 	defer pRegCloseKey.Call(hKey)
 
@@ -123,7 +130,34 @@ func getAutostart() bool {
 		0,
 		uintptr(unsafe.Pointer(&size)),
 	)
-	return ret == ERROR_SUCCESS
+	if ret != ERROR_SUCCESS || typ != REG_SZ || size < 2 {
+		return "", false
+	}
+
+	buf := make([]uint16, size/2)
+	ret, _, _ = pRegQueryValueExW.Call(
+		hKey,
+		uintptr(unsafe.Pointer(utf16Ptr(regName))),
+		0,
+		0, // lpdwReserved，MSDN 要求传 NULL
+		uintptr(unsafe.Pointer(&buf[0])),
+		uintptr(unsafe.Pointer(&size)),
+	)
+	if ret != ERROR_SUCCESS {
+		return "", false
+	}
+	return strings.Trim(strings.TrimPrefix(utf16ToString(buf), `"`), `"`), true
+}
+
+// sameAutostartPath 比较自启项里存的路径和当前 exe 路径是否指向同一处。
+// Windows 路径不区分大小写；外面可能包着引号，也在这里统一剥掉。
+func sameAutostartPath(a, b string) bool {
+	strip := func(s string) string {
+		s = strings.TrimSpace(s)
+		s = strings.TrimPrefix(s, `"`)
+		return strings.TrimSuffix(s, `"`)
+	}
+	return strings.EqualFold(strip(a), strip(b))
 }
 
 func setAutostart(enable bool) bool {

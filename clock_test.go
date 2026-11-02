@@ -309,3 +309,27 @@ func TestAcquireMutexSingleInstance(t *testing.T) {
 		t.Error("同名互斥体第二次获取应当返回 false（表示已有实例）")
 	}
 }
+
+// TestSameAutostartPath 锁定自启项路径比较的容错语义。
+// 回归背景：程序目录改名后，注册表里的旧路径让开机自启静默失灵 ——
+// 菜单仍显示已勾选，指向的文件却已不存在。自我修正依赖这个比较函数，
+// 引号、大小写、首尾空格都不能让它误判成"还是同一路径"。
+func TestSameAutostartPath(t *testing.T) {
+	cases := []struct {
+		name string
+		a, b string
+		same bool
+	}{
+		{name: "完全一致", a: `C:/A/X.exe`, b: `C:/A/X.exe`, same: true},
+		{name: "大小写不同也算同一处", a: `C:/A/X.EXE`, b: `c:/a/x.exe`, same: true},
+		{name: "带引号 vs 不带", a: `"C:/A/X.exe"`, b: `C:/A/X.exe`, same: true},
+		{name: "首尾空格", a: `  C:/A/X.exe `, b: `C:/A/X.exe`, same: true},
+		{name: "目录改名后是不同路径", a: `C:/Old/X.exe`, b: `C:/New/X.exe`, same: false},
+		{name: "不同文件名", a: `C:/A/X.exe`, b: `C:/A/Y.exe`, same: false},
+	}
+	for _, c := range cases {
+		if got := sameAutostartPath(c.a, c.b); got != c.same {
+			t.Errorf("%s: sameAutostartPath(%q, %q) = %v, want %v", c.name, c.a, c.b, got, c.same)
+		}
+	}
+}
