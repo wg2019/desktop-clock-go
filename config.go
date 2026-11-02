@@ -88,12 +88,30 @@ func loadConfig() *Config {
 }
 
 func saveConfig(cfg *Config) error {
+	return writeConfigFile(configPath(), cfg)
+}
+
+// writeConfigFile 把配置写到指定路径，供 saveConfig 与测试共用。
+func writeConfigFile(path string, cfg *Config) error {
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
 	data = append(data, '\n')
-	return os.WriteFile(configPath(), data, 0o644)
+	return os.WriteFile(path, data, 0o644)
+}
+
+// ensureConfigFile 在配置文件缺失时落一份默认值，返回这次是否真的写了。
+//
+// 为什么要写：用户改设置总得有个文件可改，否则只能照着文档猜字段名。
+// 已经存在则一律不动 —— 那是用户的设置，程序只负责读。
+// 写失败（目录只读）不算错：程序照常按默认值运行。
+func ensureConfigFile(path string, cfg *Config) bool {
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		return false
+	}
+	_ = writeConfigFile(path, cfg)
+	return true
 }
 
 // ---------- 开机自启（HKCU\...\Run） ----------

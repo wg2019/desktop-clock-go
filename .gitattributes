@@ -11,6 +11,9 @@
 # 报一堆「不是内部或外部命令」。改编码前请先在 cmd 窗口里实测。
 *.bat    text eol=crlf
 
+# 随包交付的说明必须与仓库里的字节完全一致，不让 git 转换换行
+packaging/*.txt -text
+
 # 二进制资源，禁止 git 做换行转换
 *.exe    binary
 *.ico    binary

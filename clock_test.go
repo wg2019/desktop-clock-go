@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -331,5 +332,39 @@ func TestSameAutostartPath(t *testing.T) {
 		if got := sameAutostartPath(c.a, c.b); got != c.same {
 			t.Errorf("%s: sameAutostartPath(%q, %q) = %v, want %v", c.name, c.a, c.b, got, c.same)
 		}
+	}
+}
+
+// TestEnsureConfigFile 锁定「配置缺失时生成默认值、已存在时绝不覆盖」。
+// 生成的目的是让用户有文件可改；不覆盖则守住一条底线：配置文件属于用户。
+func TestEnsureConfigFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+
+	if !ensureConfigFile(path, defaultConfig()) {
+		t.Fatal("配置缺失时应生成默认值")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("生成后应能读到文件: %v", err)
+	}
+
+	// 第二次调用不应再写：已有配置一律不动
+	if ensureConfigFile(path, defaultConfig()) {
+		t.Error("配置已存在时不应重写")
+	}
+	after, _ := os.ReadFile(path)
+	if string(after) != string(data) {
+		t.Error("已存在的配置内容被改动了")
+	}
+
+	// 生成出来的内容必须能被 loadConfig 解析回同样的字段
+	var got Config
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("生成的配置应为合法 JSON: %v", err)
+	}
+	want := defaultConfig()
+	if got.Color != want.Color || got.FontFamily != want.FontFamily || got.FontSize != want.FontSize {
+		t.Errorf("默认值不符: %+v", got)
 	}
 }

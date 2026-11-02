@@ -15,7 +15,7 @@ Windows 11 桌面时钟。贴在桌面上、永远位于所有应用窗口之下
 
 不引入第三方库，所有 Win32 调用手写声明：
 
-- 单文件约 3.1 MB（3,227,136 字节），静态链接，不依赖任何运行库
+- 单文件约 2.9 MB（2,919,424 字节），静态链接，不依赖任何运行库
 - 启动约 50 ms，常驻内存约 16 MB
 - 配置写在 exe 同目录，自启项只写 `HKCU`，不碰系统目录，也不解压到 `%TEMP%`
 - 结构体布局用**编译期断言**校验（`uint(unsafe.Sizeof(x)) - 80`），
@@ -41,25 +41,43 @@ desktop-clock-go/
 ├── go.mod                     module desktopclock（无第三方依赖）
 ├── main.go                    入口：LockOSThread + 单实例检查 + 消息循环 + wndProc   230 行
 ├── win32.go                   DLL/常量/结构体声明 + 编译期尺寸断言                   427 行
-├── config.go                  JSON 配置 + 注册表自启（advapi32）+ 颜色工具           236 行
-├── clock.go                   窗口/字体/绘制/桌面层级/拖动/自检                       432 行
+├── config.go                  JSON 配置 + 注册表自启（advapi32）+ 颜色工具           254 行
+├── clock.go                   窗口/字体/绘制/桌面层级/拖动/自检                       436 行
 ├── tray.go                    托盘图标 + 右键菜单 + 命令分发                          170 行
 ├── trayrecords.go             托盘记录清理 / 副本检测                                 217 行
 ├── dialog.go                  ChooseColorW / ChooseFontW                              76 行
-├── clock_test.go              单元测试（21 个用例）                                  335 行
+├── clock_test.go              单元测试（22 个用例）                                  370 行
 ├── trayrecords_test.go        记录分类逻辑的单测（3 个用例 + 子测试）                 107 行
 ├── build.bat                  一键构建（图标资源 + 正式参数编译）
+├── package.bat                一键打包：构建 → 组装 dist 目录 → 压 zip
+├── packaging/
+│   ├── version.txt            版本号的唯一出处（构建脚本与包名都读它）
+│   └── 使用说明.txt           随包交付给用户的说明（正文源文件）
 ├── icon.ico                   图标源文件（托盘与 exe 共用）
 ├── rsrc_windows_amd64.syso    编译进 exe 的图标与版本资源（go-winres 生成）
 ├── config.example.json        配置模板（仓库不含本机实际配置）
 ├── .gitignore / .gitattributes / LICENSE
 │
-└── DesktopClockGo.exe         构建产物，不入库
+├── DesktopClockGo.exe         构建产物，不入库
+└── dist/                      打包产物 dist\DesktopClock-v<版本>-win64(.zip)，不入库
 ```
 
-源码共约 1791 行（不含测试），测试 462 行。
+源码共约 1810 行（不含测试），测试 477 行。
 
-## 构建
+## 构建与打包
+
+两个批处理，都是双击可用、命令行可调：
+
+| 脚本 | 作用 | 产物 |
+|---|---|---|
+| `build.bat` | 编译单文件 exe | `DesktopClockGo.exe` |
+| `package.bat` | 编译 + 组装 + 压缩 | `dist\DesktopClock-v<版本>-win64\` 与同名 `.zip` |
+
+版本号只写在 `packaging\version.txt` 一处，两个脚本和包名都从它读。
+发新版就把那里改成 `1.0.1`，再跑 `package.bat`——目录名、zip 名、exe 里的版本资源
+（`--product-version`）会一起跟着变，不需要记得去改几个地方。
+
+等价的手工命令（脚本内部就是这些）：
 
 ```bash
 # 一次性：生成图标资源（之后 go build 会自动链接 .syso）
@@ -72,7 +90,14 @@ go-winres simply --icon icon.ico --manifest none \
 CGO_ENABLED=0 go build -trimpath -ldflags "-H windowsgui -s -w" -o DesktopClockGo.exe .
 ```
 
-或直接双击 `build.bat`。
+`package.bat` 组装的包里是四件东西：`DesktopClockGo.exe`、`使用说明.txt`、`icon.ico`、
+`LICENSE`。**刻意不放 `config.json`**——那里面是本机的坐标、字体、颜色，打进包等于
+把开发机的设置分发给所有人；程序启动时发现配置不存在会按默认值生成一份。
+
+压 zip 用的是系统自带的 bsdtar（`%SystemRoot%\System32\tar.exe`，Win10 1803 起内置）。
+坑在这里：**bsdtar 写 zip 默认 store、不压缩**，包会和原始文件一样大（实测 2.99 MB vs
+压缩后 1.29 MB），必须显式加 `--options "zip:compression=deflate"`。另外 Git 自带的
+GNU tar **不能写 zip**，脚本里因此写死绝对路径，避免被 PATH 里的 `tar` 顶掉。
 
 `-H windowsgui` 必不可少：否则生成的控制台子系统程序双击会附带一个黑框窗口。
 
@@ -84,7 +109,7 @@ CGO_ENABLED=0 go build -trimpath -ldflags "-H windowsgui -s -w" -o DesktopClockG
 ## 测试
 
 ```bash
-go test -v ./...     # 24 个用例
+go test -v ./...     # 25 个用例
 ```
 
 覆盖：配置解析与往返一致性、未知字段兼容、12/24 制边界（0 点/12 点）、
@@ -228,6 +253,18 @@ v1.0.0 曾在这里替用户写过 `IsPromoted = 1`（因为当时实测这台�
 顺带一个不能靠代码解决的坑：**explorer 自己的托盘状态也会卡死**。这时新加的任何图标都
 不会出现，连任务栏上的"^"折叠按钮都没有，`Shell_NotifyIcon` 却返回成功、注册表里也照常
 写下记录 —— 只能重启 explorer 恢复。排查时用截图对比最可靠：加图标前后各截一张任务栏。
+
+### 8. 产物存在 ≠ 还能重新生产出来
+
+这个项目踩过一次：zip 包一直躺在 `dist\` 里，但打包是手工拼命令做的，组装用的
+`使用说明.txt` **只存在于已解压的 `dist\DesktopClock-.../` 目录里**，而 `dist/` 在
+`.gitignore` 里。用户清理文件夹时把它删了——包还在，重新打却打不出来：交付文档没有源文件。
+
+所以规则是：**任何进包的素材都必须在版本库里**，`dist/` 只放产物。现在 `packaging/`
+存 `使用说明.txt` 与 `version.txt`，`package.bat` 一条命令完成构建、组装、压缩。
+
+同一个毛病的轻量版是版本号散落：目录名、zip 名、exe 版本资源、README 各写一遍
+`1.0.0`，改漏一处就会发布出自相矛盾的包。现在只有一个 `packaging/version.txt`。
 
 ## 托盘菜单
 
