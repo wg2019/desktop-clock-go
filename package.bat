@@ -30,17 +30,17 @@ for %%F in ("packaging\使用说明.txt" "icon.ico" "LICENSE") do (
     )
 )
 
-REM 用系统自带的 bsdtar（Win10 1803+）。Git 自带的 GNU tar 不支持写 zip，
-REM 所以这里写死绝对路径，避免被 PATH 里的 GNU tar 顶掉。
-set "TAR=%SystemRoot%\System32\tar.exe"
-if not exist "%TAR%" (
-    echo [错误] 找不到 %TAR%（需要 Windows 10 1803 或更高版本）
+REM 压缩用 PowerShell 的 Compress-Archive，原因见下方 [打包] 处的注释
+set "PS=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
+if not exist "%PS%" (
+    echo [错误] 找不到 %PS%
     pause
     exit /b 1
 )
 
 set "NAME=DesktopClock-v%VERSION%-win64"
 set "STAGE=dist\%NAME%"
+set "ZIPFILE=%CD%\dist\%NAME%.zip"
 
 REM 编译交给 build.bat，传 nopause 免得打包卡在暂停上
 call build.bat nopause
@@ -69,22 +69,21 @@ REM 这台机器的设置；程序首次运行会按默认值生成自己那份。
 if exist "%STAGE%\config.json" del /q "%STAGE%\config.json"
 
 echo [打包] 压缩 dist\%NAME%.zip ...
-pushd "%STAGE%"
-if exist "..\%NAME%.zip" del /q "..\%NAME%.zip"
-REM -a 按扩展名选格式（.zip）；bsdtar 默认 zip 用 store，必须显式指定 deflate
-"%TAR%" -a --options "zip:compression=deflate" -c -f "..\%NAME%.zip" *
+if exist "%ZIPFILE%" del /q "%ZIPFILE%"
+REM 用 Compress-Archive 而不是系统自带的 tar.exe：后者写 zip 时会把中文文件名
+REM 按本地代码页存、且不置 UTF-8 标志位，换到非中文系统解压就是乱码。
+REM Compress-Archive 会为中文名写上 UTF-8 标志，跨语言环境都正常。
+"%PS%" -NoProfile -NonInteractive -Command "Compress-Archive -Path '%CD%\%STAGE%\*' -DestinationPath '%ZIPFILE%' -CompressionLevel Optimal"
 if errorlevel 1 (
-    popd
     echo [错误] 压缩失败
     pause
     exit /b 1
 )
-popd
 
 echo.
 echo 打包完成：
 echo   目录  : %STAGE%
 echo   压缩包: dist\%NAME%.zip
-for %%F in ("dist\%NAME%.zip") do echo   大小  : %%~zF 字节
+for %%F in ("%ZIPFILE%") do echo   大小  : %%~zF 字节
 echo.
 if /i not "%~1"=="nopause" pause

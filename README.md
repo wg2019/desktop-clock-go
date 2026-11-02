@@ -94,10 +94,16 @@ CGO_ENABLED=0 go build -trimpath -ldflags "-H windowsgui -s -w" -o DesktopClockG
 `LICENSE`。**刻意不放 `config.json`**——那里面是本机的坐标、字体、颜色，打进包等于
 把开发机的设置分发给所有人；程序启动时发现配置不存在会按默认值生成一份。
 
-压 zip 用的是系统自带的 bsdtar（`%SystemRoot%\System32\tar.exe`，Win10 1803 起内置）。
-坑在这里：**bsdtar 写 zip 默认 store、不压缩**，包会和原始文件一样大（实测 2.99 MB vs
-压缩后 1.29 MB），必须显式加 `--options "zip:compression=deflate"`。另外 Git 自带的
-GNU tar **不能写 zip**，脚本里因此写死绝对路径，避免被 PATH 里的 `tar` 顶掉。
+压 zip 用 PowerShell 的 `Compress-Archive`。三个候选里只有它能用：
+
+| 方案 | 问题 |
+|---|---|
+| `tar.exe`（bsdtar，系统自带） | 中文名按本地代码页存、不置 UTF-8 标志（实测 `使用说明.txt` 换到别的语言环境就乱码）；默认 store 不压缩，2.99 MB vs 压缩后 1.29 MB |
+| GNU tar（Git 自带） | 根本不能写 zip |
+| `Compress-Archive` | 中文名带 UTF-8 标志，跨语言环境正常；默认压缩 |
+
+这一条值得写进验收：解出来的 zip 里，`使用说明.txt` 条目的 `flag_bits & 0x800`
+必须为真。哪天换回别的压缩工具，编码会悄悄退回去，而中文系统上完全看不出问题。
 
 `-H windowsgui` 必不可少：否则生成的控制台子系统程序双击会附带一个黑框窗口。
 
