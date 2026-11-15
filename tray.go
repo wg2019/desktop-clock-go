@@ -147,8 +147,7 @@ func (c *Clock) onCommand(wparam uintptr) {
 			c.cfg.HourFormat = "24"
 		}
 		_ = saveConfig(c.cfg)
-		c.resizeToText() // 12 小时制多了"上午/下午"，窗口要变宽
-		pInvalidateRect.Call(c.hwnd, 0, 1)
+		c.resizeToText() // 12 小时制多了"上午/下午"，窗口要变宽；内部会重画
 	case idToggleLock:
 		c.cfg.ClickThrough = !c.cfg.ClickThrough
 		c.applyLayer() // 重设扩展样式；桌面层下同时重新压回底部

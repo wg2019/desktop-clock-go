@@ -105,6 +105,13 @@ func TestDefaultConfigSane(t *testing.T) {
 	if c.FontSize <= 0 {
 		t.Errorf("字号必须为正, 实际 %d", c.FontSize)
 	}
+	if c.Opacity != defaultOpacity {
+		t.Errorf("默认不透明度应为 %d, 实际 %d", defaultOpacity, c.Opacity)
+	}
+	// 出厂值不能是 100：那等于没有半透明效果；也不能太低，深色壁纸上会看不清
+	if c.Opacity < 60 || c.Opacity >= 100 {
+		t.Errorf("默认不透明度 %d 超出合理区间 [60,100)", c.Opacity)
+	}
 }
 
 // ---------- 时间格式 ----------
@@ -162,10 +169,60 @@ func TestParseColorInvalidFallsBack(t *testing.T) {
 	}
 }
 
-// TestColorKeyNotBlack 色键若为纯黑，与黑背景混合会留边；必须非黑。
-func TestColorKeyNotBlack(t *testing.T) {
-	if keyR == 0 && keyG == 0 && keyB == 0 {
-		t.Error("透明色键不能是纯黑")
+// ---------- 逐像素 alpha ----------
+
+// TestPremultipliedPixel 锁定「覆盖率 → 预乘 alpha 像素」的算法。
+//
+// 两条不能破的底线：
+//  1. 没被笔画碰到的像素必须全 0（alpha=0 且 RGB=0）。分层窗口要求 RGB 预乘，
+//     留个非零 RGB 会在边缘透出一圈彩色；
+//  2. 完全不透明时必须还原成原色，否则用户选的颜色会被画错。
+func TestPremultipliedPixel(t *testing.T) {
+	// 覆盖率 0：四个字节都得是 0
+	if R, G, B, A := premultipliedPixel(0, 0x39, 0xFF, 0x14, 85); R != 0 || G != 0 || B != 0 || A != 0 {
+		t.Errorf("零覆盖率应为全透明, 实际 R=%d G=%d B=%d A=%d", R, G, B, A)
+	}
+
+	// 满覆盖率 + 100%：原色原样返回
+	if R, G, B, A := premultipliedPixel(255, 0x39, 0xFF, 0x14, 100); R != 0x39 || G != 0xFF || B != 0x14 || A != 255 {
+		t.Errorf("满覆盖率+全不透明应为 (57,255,20,255), 实际 (%d,%d,%d,%d)", R, G, B, A)
+	}
+
+	// 满覆盖率 + 50%：alpha 减半，RGB 同比预乘（不是只改 alpha）
+	R, G, B, A := premultipliedPixel(255, 0x39, 0xFF, 0x14, 50)
+	if A != 128 { // (255*50+50)/100 = 128，四舍五入而非截断成 127
+		t.Errorf("50%% 不透明度 alpha = %d, 期望 128", A)
+	}
+	if R != byte(0x39*128/255) || G != byte(0xFF*128/255) || B != byte(0x14*128/255) {
+		t.Errorf("RGB 必须按 alpha 预乘, 实际 (%d,%d,%d)", R, G, B)
+	}
+
+	// 单调性：覆盖率越大，alpha 不能反而变小（边缘渐变不能出现断层）
+	prev := -1
+	for cov := 0; cov <= 255; cov++ {
+		_, _, _, a := premultipliedPixel(byte(cov), 0x39, 0xFF, 0x14, 85)
+		if int(a) < prev {
+			t.Fatalf("覆盖率 %d 的 alpha=%d 小于前一档 %d", cov, a, prev)
+		}
+		prev = int(a)
+	}
+}
+
+// TestClampOpacity 不透明度写错时退回默认值，而不是画出看不见的文字。
+func TestClampOpacity(t *testing.T) {
+	cases := []struct{ in, want int }{
+		{85, 85},
+		{1, 1},
+		{100, 100},
+		{0, defaultOpacity},   // 0 会让文字彻底消失
+		{-20, defaultOpacity}, // 负数同理
+		{101, defaultOpacity},
+		{1000, defaultOpacity},
+	}
+	for _, c := range cases {
+		if got := clampOpacity(c.in); got != c.want {
+			t.Errorf("clampOpacity(%d) = %d, 期望 %d", c.in, got, c.want)
+		}
 	}
 }
 
@@ -188,6 +245,8 @@ func TestStructSizes(t *testing.T) {
 		{"RECT", unsafe.Sizeof(RECT{}), 16},
 		{"POINT", unsafe.Sizeof(POINT{}), 8},
 		{"SIZE", unsafe.Sizeof(SIZE{}), 8},
+		{"BITMAPINFOHEADER", unsafe.Sizeof(BITMAPINFOHEADER{}), 40},
+		{"BLENDFUNCTION", unsafe.Sizeof(BLENDFUNCTION{}), 4},
 	}
 	for _, c := range cases {
 		if c.got != c.want {

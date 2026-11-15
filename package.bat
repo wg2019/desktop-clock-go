@@ -11,7 +11,7 @@ REM ============================================================
 setlocal
 cd /d "%~dp0"
 
-set "VERSION=1.0.0"
+set "VERSION=1.1.0"
 if exist "packaging\version.txt" (
     for /f "usebackq delims=" %%V in ("packaging\version.txt") do set "VERSION=%%V"
 )

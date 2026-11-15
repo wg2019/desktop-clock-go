@@ -99,9 +99,14 @@ func wndProc(hwnd, msg, wparam, lparam uintptr) uintptr {
 		pKillTimer.Call(hwnd, timerTrayRetry)
 		if c != nil {
 			c.removeTray()
+			c.surface.release()
 		}
 		pPostQuitMessage.Call(0)
 		return 0
+
+	case WM_ERASEBKGND:
+		// 内容来自离屏位图，系统擦背景只会闪一下；返回非 0 表示"已擦除"
+		return 1
 
 	case WM_PAINT:
 		if c != nil {
@@ -132,7 +137,8 @@ func wndProc(hwnd, msg, wparam, lparam uintptr) uintptr {
 				return 0
 			}
 			c.keepOnDesktop()
-			pInvalidateRect.Call(hwnd, 0, 1)
+			// 分层窗口不靠 WM_PAINT 刷新：直接重画一帧，省一次消息往返
+			c.render()
 		}
 		return 0
 

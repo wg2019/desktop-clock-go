@@ -15,20 +15,18 @@ const (
 	// 64 位程序用的是同一套 API，与编译目标位数无关。
 	className   = "DesktopClockWindow"
 	windowTitle = "DesktopClock"
-
-	// 透明色键：窗口背景用这个颜色填充，配合 LWA_COLORKEY 让该色变全透明。
-	// 选 (1,1,1) 而不是纯黑，避免与纯黑背景混合时出现边缘黑边。
-	keyR, keyG, keyB = 1, 1, 1
 )
 
 // Clock 持有全部运行期状态。单实例，由包级变量 app 引用
 // （原因见 main.go：窗口过程拿不到 Go 的闭包）。
 type Clock struct {
-	cfg    *Config
-	hwnd   uintptr
-	hfont  uintptr
-	hbrush uintptr
-	hicon  uintptr
+	cfg   *Config
+	hwnd  uintptr
+	hfont uintptr
+	hicon uintptr
+
+	// surface 是逐像素 alpha 的离屏位图，内容建好后才交给窗口（见 layer.go）
+	surface dibSurface
 
 	w, h int
 
@@ -69,7 +67,6 @@ func newClock() error {
 		w:     200,
 		h:     60,
 	}
-	c.hbrush, _, _ = pCreateSolidBrush.Call(uintptr(toColorRef(keyR, keyG, keyB)))
 	app = c
 
 	if err := c.registerClass(); err != nil {
@@ -79,12 +76,10 @@ func newClock() error {
 	if err := c.createWindow(); err != nil {
 		return err
 	}
+	// 先把内容画进离屏位图，再显示：否则会有一帧空窗口闪过去
 	c.resizeToText()
 
 	pShowWindow.Call(c.hwnd, SW_SHOW)
-	pUpdateWindow.Call(c.hwnd)
-	// 色键：该颜色的像素完全透明，且不接收鼠标（配合 WS_EX_TRANSPARENT 即穿透）
-	pSetLayeredWindowAttrs.Call(c.hwnd, uintptr(toColorRef(keyR, keyG, keyB)), 0, LWA_COLORKEY)
 
 	c.applyLayer()
 	c.setupTray()
@@ -130,7 +125,8 @@ func (c *Clock) registerClass() error {
 	wc.LpfnWndProc = wndProcCb
 	wc.HInstance = hInst
 	wc.HCursor = cursor
-	wc.HbrBackground = 6 // (HBRUSH)(COLOR_WINDOW+1)
+	// 不设背景刷：窗口内容全由 UpdateLayeredWindow 提供，系统擦背景只会白白闪一下
+	wc.HbrBackground = 0
 	wc.LpszClassName = utf16Ptr(className)
 	wc.HIcon = c.hicon
 	wc.HIconSm = c.hicon
@@ -196,6 +192,9 @@ func (c *Clock) logFont() LOGFONTW {
 	if c.cfg.Italic {
 		lf.LfItalic = 1
 	}
+	// 必须指定灰度抗锯齿：质量留默认值(0)时系统会走 ClearType，而 ClearType 靠
+	// RGB 三通道错位做次像素渲染 —— 转为 alpha 后边缘会留下一圈彩边。
+	lf.LfQuality = ANTIALIASED_QUALITY
 	copyUTF16(lf.LfFaceName[:], c.cfg.FontFamily)
 	return lf
 }
@@ -234,6 +233,9 @@ func (c *Clock) resizeToText() {
 		uintptr(c.cfg.X), uintptr(c.cfg.Y),
 		uintptr(c.w), uintptr(c.h),
 		SWP_NOZORDER)
+
+	// 尺寸变了缓冲也要重建，画完再交出去（分层窗口重画不受 WM_PAINT 驱动）
+	c.render()
 }
 
 // ---------- 时间 ----------
@@ -256,27 +258,15 @@ func (c *Clock) timeStr() string {
 
 // ---------- 绘制 ----------
 
+// onPaint 把绘制区域标记为有效，然后重画。
+//
+// 画面本身不从这里出：分层窗口的内容由 UpdateLayeredWindow 直接给出（见 layer.go）。
+// 但 WM_PAINT 到达时必须 BeginPaint/EndPaint 验证区域，否则系统会一直重发这条消息。
 func (c *Clock) onPaint() {
 	var ps PAINTSTRUCT
-	hdc, _, _ := pBeginPaint.Call(c.hwnd, uintptr(unsafe.Pointer(&ps)))
-
-	oldFont, _, _ := pSelectObject.Call(hdc, c.hfont)
-	pSetBkMode.Call(hdc, BKMODE_TRANSPARENT) // 文字背景透明，露出色键底色
-	pSetTextColor.Call(hdc, uintptr(parseColorRef(c.cfg.Color)))
-
-	var rc RECT
-	pGetClientRect.Call(c.hwnd, uintptr(unsafe.Pointer(&rc)))
-	pFillRect.Call(hdc, uintptr(unsafe.Pointer(&rc)), c.hbrush)
-
-	text := c.timeStr()
-	pDrawTextW.Call(hdc,
-		uintptr(unsafe.Pointer(utf16Ptr(text))),
-		^uintptr(0), // cchText = -1：以 NUL 结尾自动计长
-		uintptr(unsafe.Pointer(&rc)),
-		DT_CENTER|DT_VCENTER|DT_SINGLELINE)
-
-	pSelectObject.Call(hdc, oldFont) // 还原 DC 默认字体，避免 GDI 状态残留
+	_, _, _ = pBeginPaint.Call(c.hwnd, uintptr(unsafe.Pointer(&ps)))
 	pEndPaint.Call(c.hwnd, uintptr(unsafe.Pointer(&ps)))
+	c.render()
 }
 
 // ---------- 图层 ----------
@@ -420,10 +410,12 @@ func (c *Clock) onMouseMove() {
 	x := int(pt.X) - c.dragOffX
 	y := int(pt.Y) - c.dragOffY
 
-	// 最后一个参数 1 = 立即重绘，否则拖动过程中会留下拖影
-	pMoveWindow.Call(c.hwnd, uintptr(x), uintptr(y), uintptr(c.w), uintptr(c.h), 1)
+	// 不重绘（最后一个参数 0）：内容紧接着由 render 整幅重画，让系统再擦一遍只会多闪一下
+	pMoveWindow.Call(c.hwnd, uintptr(x), uintptr(y), uintptr(c.w), uintptr(c.h), 0)
 	c.cfg.X = x
 	c.cfg.Y = y
+	// 分层窗口搬动时内容会跟着窗口走，但位置变了就得重画一次让内容与新位置对齐
+	c.render()
 }
 
 func (c *Clock) onLButtonUp() {

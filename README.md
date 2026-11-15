@@ -15,7 +15,7 @@ Windows 11 桌面时钟。贴在桌面上、永远位于所有应用窗口之下
 
 不引入第三方库，所有 Win32 调用手写声明：
 
-- 单文件约 2.9 MB（2,919,424 字节），静态链接，不依赖任何运行库
+- 单文件约 2.9 MB（2,923,008 字节），静态链接，不依赖任何运行库
 - 启动约 50 ms，常驻内存约 16 MB
 - 配置写在 exe 同目录，自启项只写 `HKCU`，不碰系统目录，也不解压到 `%TEMP%`
 - 结构体布局用**编译期断言**校验（`uint(unsafe.Sizeof(x)) - 80`），
@@ -30,6 +30,7 @@ Windows 11 桌面时钟。贴在桌面上、永远位于所有应用窗口之下
 | 开机自启 | `HKCU\...\Run`，托盘菜单可开关；启动时发现路径过期（目录改名/移动）会自动改写 |
 | 拖动 + 锁定 | 取消「锁定(鼠标穿透)」后可拖动；开启后点击穿透到桌面 |
 | 桌面层 | 贴在桌面上、压在所有应用之下，点它不抢焦点 |
+| 逐像素透明 | 文字边缘按覆盖率抗锯齿，整幅可调不透明度（`opacity`），高对比壁纸上不再有硬边 |
 | 防重复启动 | 命名互斥体（`Local\DesktopClockSingleInstance`），第二个实例提示后自行退出 |
 | 托盘记录自愈 | 启动时删掉指向已删除文件的旧登记记录；发现仍有其他副本时置顶提示 |
 | 托盘图标自愈 | 监听 `TaskbarCreated`，资源管理器重启后自动把图标登记回去。常显与否由用户在系统设置里决定，程序不代劳 |
@@ -39,14 +40,15 @@ Windows 11 桌面时钟。贴在桌面上、永远位于所有应用窗口之下
 ```
 desktop-clock-go/
 ├── go.mod                     module desktopclock（无第三方依赖）
-├── main.go                    入口：LockOSThread + 单实例检查 + 消息循环 + wndProc   230 行
-├── win32.go                   DLL/常量/结构体声明 + 编译期尺寸断言                   427 行
-├── config.go                  JSON 配置 + 注册表自启（advapi32）+ 颜色工具           254 行
-├── clock.go                   窗口/字体/绘制/桌面层级/拖动/自检                       436 行
-├── tray.go                    托盘图标 + 右键菜单 + 命令分发                          170 行
+├── main.go                    入口：LockOSThread + 单实例检查 + 消息循环 + wndProc   236 行
+├── win32.go                   DLL/常量/结构体声明 + 编译期尺寸断言                   463 行
+├── config.go                  JSON 配置 + 注册表自启（advapi32）+ 颜色工具           274 行
+├── clock.go                   窗口/字体/桌面层级/拖动/自检                           428 行
+├── layer.go                   逐像素 alpha 图层：32 位 DIB + 覆盖率转预乘 alpha      176 行
+├── tray.go                    托盘图标 + 右键菜单 + 命令分发                          169 行
 ├── trayrecords.go             托盘记录清理 / 副本检测                                 217 行
-├── dialog.go                  ChooseColorW / ChooseFontW                              76 行
-├── clock_test.go              单元测试（22 个用例）                                  370 行
+├── dialog.go                  ChooseColorW / ChooseFontW                              75 行
+├── clock_test.go              单元测试（23 个用例）                                  429 行
 ├── trayrecords_test.go        记录分类逻辑的单测（3 个用例 + 子测试）                 107 行
 ├── build.bat                  一键构建（图标资源 + 正式参数编译）
 ├── package.bat                一键打包：构建 → 组装 dist 目录 → 压 zip
@@ -62,7 +64,7 @@ desktop-clock-go/
 └── dist/                      打包产物 dist\DesktopClock-v<版本>-win64(.zip)，不入库
 ```
 
-源码共约 1810 行（不含测试），测试 477 行。
+源码共约 2038 行（不含测试），测试 536 行。
 
 ## 构建与打包
 
@@ -83,8 +85,8 @@ desktop-clock-go/
 # 一次性：生成图标资源（之后 go build 会自动链接 .syso）
 go install github.com/tc-hib/go-winres@latest
 go-winres simply --icon icon.ico --manifest none \
-    --product-name "桌面时钟" --product-version "1.0.0.0" \
-    --file-version "1.0.0.0" --file-description "Windows 桌面时钟"
+    --product-name "桌面时钟" --product-version "1.1.0.0" \
+    --file-version "1.1.0.0" --file-description "Windows 桌面时钟"
 
 # 编译
 CGO_ENABLED=0 go build -trimpath -ldflags "-H windowsgui -s -w" -o DesktopClockGo.exe .
@@ -280,6 +282,37 @@ v1.0.0 曾在这里替用户写过 `IsPromoted = 1`（因为当时实测这台�
 同一个毛病的轻量版是版本号散落：目录名、zip 名、exe 版本资源、README 各写一遍
 `1.0.0`，改漏一处就会发布出自相矛盾的包。现在只有一个 `packaging/version.txt`。
 
+### 9. 色键透明只有两档，做不出抗锯齿
+
+最早的透明是**色键**：窗口背景填成 `(1,1,1)`，再用
+`SetLayeredWindowAttributes(hwnd, key, 0, LWA_COLORKEY)` 把这个颜色"抠掉"。
+它只回答一个问题——这个像素算不算透明——所以文字边缘的覆盖率无处安放，只能整像素
+硬切。在亮壁纸上（或与文字色对比强烈的底色上），一圈毛刺格外显眼。
+
+现在换成**逐像素 alpha**：`UpdateLayeredWindow` + 一张 32 位 DIB，每个像素自带
+不透明度，边缘自然过渡，顺带能乘上一个整体不透明度。
+
+GDI 只画颜色、从不写 alpha 通道，所以走的是"覆盖率遮罩"这条路：
+
+1. 在**纯黑**位图上用**白色**画字。GDI 的灰度抗锯齿把白色按覆盖率稀释成灰，
+   灰度值就是覆盖率本身；
+2. 逐像素把灰度乘上文字色和不透明度，写成**预乘 alpha** 的 BGRA
+   （`RGB = 文字色 × alpha`，少乘这一步边缘会有一圈亮边）；
+3. 整块交给 `UpdateLayeredWindow` 合成。
+
+三个必须注意的点：
+
+- **字体质量要显式设成 `ANTIALIASED_QUALITY`**。留默认值(0)时系统会走 ClearType，
+  而 ClearType 靠 RGB 三通道错位做次像素渲染，转成 alpha 后边缘会留下彩边。
+- **DIB 高度传负值**（自上而下存行），否则拿到的图上下颠倒 —— 和 `GetDIBits` 那类
+  API 的约定正好相反。
+- **`BLENDFUNCTION.SourceConstantAlpha` 填 255**。不透明度已经烘进每像素的 alpha，
+  这里再打折等于乘两次。
+
+代价：色键下"透明区域"天然不接收鼠标，逐像素 alpha 的窗口是整块矩形接收鼠标。
+默认开着「锁定(鼠标穿透)」所以无感；关掉锁定拖动时，点文字周围的空白也会开始拖 ——
+对 248×73 这种贴字尺寸的窗口来说反而更顺手，故未做额外处理。
+
 ## 托盘菜单
 
 - 选择颜色… / 选择字体…
@@ -301,6 +334,7 @@ v1.0.0 曾在这里替用户写过 `IsPromoted = 1`（因为当时实测这台�
   "font_size": 48,
   "font_weight": "bold",
   "italic": false,
+  "opacity": 85,
   "x": 100,
   "y": 100,
   "autostart": false,
@@ -316,23 +350,24 @@ v1.0.0 曾在这里替用户写过 `IsPromoted = 1`（因为当时实测这台�
 | `hour_format` | `"24"` 或 `"12"` |
 | `color` | `#RRGGBB`，格式非法时回退到 `#39FF14` |
 | `font_size` | 字符高度，单位像素 |
+| `opacity` | 整体不透明度 1-100，100 为完全不透明；缺省或越界（含 0）按 85 处理 |
 | `x` / `y` | 窗口左上角坐标，拖动后会写回 |
 | `autostart` | 启动时以注册表实际状态为准，这里只是落盘记录 |
 
 ## 测试与验收
 
 ```bash
-go test ./...     # 23 个单元测试：配置兼容性、时间格式化、颜色字节序、
+go test ./...     # 26 个单元测试：配置兼容性、时间格式化、颜色字节序、像素预乘、
                   # 结构体尺寸、UTF-16 转换、注册表路径、菜单 ID 唯一性等
-go vet ./...      # 仅 1 条提示，见下方说明
+go vet ./...      # 2 条同类提示，见下方说明
 gofmt -l .        # 应无输出
 ```
 
-**关于 `go vet` 的那条 `possible misuse of unsafe.Pointer`（clock.go 的
-`onWindowPosChanging`）**：这是 Win32 消息回调的固有写法。`lparam` 指向的是
-系统传入的 `WINDOWPOS`，不是 Go 堆对象，指针不逃逸、只在回调内读写，因此安全。
-任何等价写法（`unsafe.Add`、`unsafe.Slice`）都躲不过 vet 的 `unsafeptr` 静态检查，
-代码里已就地注释说明。
+**关于 `go vet` 的两条 `possible misuse of unsafe.Pointer`**（`clock.go` 的
+`onWindowPosChanging`、`layer.go` 的 `dibSurface.pixels`）：都是 Win32 交互的固有写法。
+前者拿到的是系统传入的 `WINDOWPOS`，后者是 `CreateDIBSection` 交出来的位图像素地址 ——
+都不是 Go 堆对象、不逃逸、生命周期由系统句柄决定，因此安全。任何等价写法
+（`unsafe.Add`、`unsafe.Slice`）都躲不过 vet 的 `unsafeptr` 静态检查，代码里已就地注释。
 
 功能回归的复现方法（用的是临时小工具，未入库，思路可照搬）：
 向时钟窗口 `PostMessage(hwnd, WM_COMMAND, <菜单ID>, 0)` 模拟点击菜单，
@@ -346,17 +381,18 @@ gofmt -l .        # 应无输出
 
 | 项目 | 结果 |
 | --- | --- |
-| 单元测试 | 23/23 通过 |
-| 24→12 小时制 | 窗口 248→393px，还原正常 |
+| 单元测试 | 26/26 通过 |
+| 24→12 小时制 | 窗口 248→395px，还原正常 |
 | 鼠标穿透开关 | 扩样式 `TRANSPARENT` 正确增删 |
 | 桌面层开关 | 关闭后变 `TOPMOST` 悬浮，开启后回到 `NOACTIVATE` 底层 |
 | 开机自启开关 | 注册表项正确增删 |
 | 静置 8 秒 | 位置/尺寸/样式无漂移 |
 | 防重复启动 | 第二个实例弹出提示后以退出码 0 结束，首个实例窗口不受影响 |
 | 退出 | 进程干净结束 |
-| 正式构建 | 3.1MB（3,227,136 字节），Subsystem=2(GUI)，无控制台窗口 |
+| 正式构建 | 2.9MB（2,923,008 字节），Subsystem=2(GUI)，无控制台窗口 |
 | 死记录自愈 | 构造指向已删除文件的记录，启动后被自动删除 |
 | 多副本提示 | 构造指向现存副本的记录，启动后弹出置顶提示，路径与设置位置正确 |
+| 逐像素 alpha | 用同参数的独立探针窗口抓屏：50% 红与下方画面正确混合、100% 绿保持纯绿，确认 alpha 被 DWM 采信（若 alpha 被忽略会看到整块黑框） |
 
 ## 许可证
 

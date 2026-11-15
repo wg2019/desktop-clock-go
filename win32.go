@@ -33,25 +33,22 @@ var (
 	pGetFileAttributesW = kernel32.NewProc("GetFileAttributesW")
 
 	// user32 — 窗口
-	pRegisterClassExW      = user32.NewProc("RegisterClassExW")
-	pCreateWindowExW       = user32.NewProc("CreateWindowExW")
-	pDefWindowProcW        = user32.NewProc("DefWindowProcW")
-	pMessageBoxW           = user32.NewProc("MessageBoxW")
-	pDestroyWindow         = user32.NewProc("DestroyWindow")
-	pShowWindow            = user32.NewProc("ShowWindow")
-	pUpdateWindow          = user32.NewProc("UpdateWindow")
-	pSetWindowPos          = user32.NewProc("SetWindowPos")
-	pSetWindowLongPtrW     = user32.NewProc("SetWindowLongPtrW")
-	pMoveWindow            = user32.NewProc("MoveWindow")
-	pGetClientRect         = user32.NewProc("GetClientRect")
-	pGetWindowRect         = user32.NewProc("GetWindowRect")
-	pInvalidateRect        = user32.NewProc("InvalidateRect")
-	pIsWindowVisible       = user32.NewProc("IsWindowVisible")
-	pIsIconic              = user32.NewProc("IsIconic")
-	pFindWindowW           = user32.NewProc("FindWindowW")
-	pGetDesktopWindow      = user32.NewProc("GetDesktopWindow")
-	pGetWindow             = user32.NewProc("GetWindow")
-	pSetLayeredWindowAttrs = user32.NewProc("SetLayeredWindowAttributes")
+	pRegisterClassExW    = user32.NewProc("RegisterClassExW")
+	pCreateWindowExW     = user32.NewProc("CreateWindowExW")
+	pDefWindowProcW      = user32.NewProc("DefWindowProcW")
+	pMessageBoxW         = user32.NewProc("MessageBoxW")
+	pDestroyWindow       = user32.NewProc("DestroyWindow")
+	pShowWindow          = user32.NewProc("ShowWindow")
+	pSetWindowPos        = user32.NewProc("SetWindowPos")
+	pSetWindowLongPtrW   = user32.NewProc("SetWindowLongPtrW")
+	pMoveWindow          = user32.NewProc("MoveWindow")
+	pGetWindowRect       = user32.NewProc("GetWindowRect")
+	pIsWindowVisible     = user32.NewProc("IsWindowVisible")
+	pIsIconic            = user32.NewProc("IsIconic")
+	pFindWindowW         = user32.NewProc("FindWindowW")
+	pGetDesktopWindow    = user32.NewProc("GetDesktopWindow")
+	pGetWindow           = user32.NewProc("GetWindow")
+	pUpdateLayeredWindow = user32.NewProc("UpdateLayeredWindow")
 
 	// user32 — 消息循环
 	pGetMessageW      = user32.NewProc("GetMessageW")
@@ -64,7 +61,6 @@ var (
 	pEndPaint       = user32.NewProc("EndPaint")
 	pGetDC          = user32.NewProc("GetDC")
 	pReleaseDC      = user32.NewProc("ReleaseDC")
-	pFillRect       = user32.NewProc("FillRect")
 	pDrawTextW      = user32.NewProc("DrawTextW")
 	pSetTimer       = user32.NewProc("SetTimer")
 	pKillTimer      = user32.NewProc("KillTimer")
@@ -87,12 +83,16 @@ var (
 
 	// gdi32
 	pCreateFontIndirectW   = gdi32.NewProc("CreateFontIndirectW")
-	pCreateSolidBrush      = gdi32.NewProc("CreateSolidBrush")
 	pSelectObject          = gdi32.NewProc("SelectObject")
 	pDeleteObject          = gdi32.NewProc("DeleteObject")
 	pSetTextColor          = gdi32.NewProc("SetTextColor")
 	pSetBkMode             = gdi32.NewProc("SetBkMode")
 	pGetTextExtentPoint32W = gdi32.NewProc("GetTextExtentPoint32W")
+
+	// gdi32 — 逐像素 alpha 图层用的内存位图
+	pCreateCompatibleDC = gdi32.NewProc("CreateCompatibleDC")
+	pCreateDIBSection   = gdi32.NewProc("CreateDIBSection")
+	pDeleteDC           = gdi32.NewProc("DeleteDC")
 
 	// shell32
 	pShellNotifyIconW = shell32.NewProc("Shell_NotifyIconW")
@@ -121,7 +121,7 @@ const (
 	WS_EX_TOPMOST     = 0x00000008
 	WS_EX_TRANSPARENT = 0x00000020 // 鼠标穿透：点击直接落到下层窗口
 	WS_EX_TOOLWINDOW  = 0x00000080 // 不进 Alt+Tab、不在任务栏显示
-	WS_EX_LAYERED     = 0x00080000 // 分层窗口：配合 SetLayeredWindowAttributes 做色键透明
+	WS_EX_LAYERED     = 0x00080000 // 分层窗口：配合 UpdateLayeredWindow 做逐像素 alpha
 	// NOACTIVATE：点击不激活窗口。桌面层必须，否则点一下就会把时钟抬到所有窗口之前
 	WS_EX_NOACTIVATE = 0x08000000
 
@@ -138,8 +138,13 @@ const (
 	SWP_NOZORDER   = 0x0004
 	SWP_NOACTIVATE = 0x0010
 
-	// 层叠窗口
-	LWA_COLORKEY = 0x0001
+	// 逐像素 alpha 图层（UpdateLayeredWindow）
+	ULW_ALPHA                = 0x0002 // dwFlags：用 pblend 里的逐像素 alpha，不用色键
+	AC_SRC_OVER              = 0x00   // BlendOp
+	AC_SRC_ALPHA             = 0x01   // AlphaFormat：源位图自带 alpha，且已按 alpha 预乘
+	DIB_RGB_COLORS           = 0      // CreateDIBSection 的 iUsage：像素里直接存颜色值
+	BI_RGB                   = 0      // 不压缩的 32 位位图
+	ANTIALIASED_QUALITY byte = 4      // 灰度抗锯齿（默认值会走 ClearType，见 logFont 注释）
 
 	// GetWindow 的 uCmd
 	GW_HWNDPREV = 3 // z 序里"上面那一个"（+2 是下面那一个，未用）
@@ -148,6 +153,7 @@ const (
 	WM_DESTROY           = 0x0002
 	WM_PAINT             = 0x000F
 	WM_CLOSE             = 0x0010
+	WM_ERASEBKGND        = 0x0014
 	WM_TIMER             = 0x0113
 	WM_COMMAND           = 0x0111
 	WM_MOUSEACTIVATE     = 0x0021
@@ -349,6 +355,30 @@ type WINDOWPOS struct {
 	_               uint32
 }
 
+// BITMAPINFOHEADER 描述 CreateDIBSection 要建一张什么样的位图。
+// 这里只用到 header、不跟调色板：32 位 BI_RGB 不需要颜色表。
+type BITMAPINFOHEADER struct {
+	BiSize          uint32
+	BiWidth         int32
+	BiHeight        int32 // 负值 = 自上而下存行（与像素在内存里的顺序一致）
+	BiPlanes        uint16
+	BiBitCount      uint16
+	BiCompression   uint32
+	BiSizeImage     uint32
+	BiXPelsPerMeter int32
+	BiYPelsPerMeter int32
+	BiClrUsed       uint32
+	BiClrImportant  uint32
+}
+
+// BLENDFUNCTION 告诉 UpdateLayeredWindow 怎么把源位图合成到屏幕上。
+type BLENDFUNCTION struct {
+	BlendOp             byte
+	BlendFlags          byte
+	SourceConstantAlpha byte // 整幅的额外不透明度；逐像素 alpha 时填 255（不透明度烘进 alpha 通道）
+	AlphaFormat         byte
+}
+
 type MSG struct {
 	Hwnd     uintptr
 	Message  uint32
@@ -388,6 +418,12 @@ const (
 
 	_ = uint(unsafe.Sizeof(MSG{}) - 48)
 	_ = uint(48 - unsafe.Sizeof(MSG{}))
+
+	_ = uint(unsafe.Sizeof(BITMAPINFOHEADER{}) - 40)
+	_ = uint(40 - unsafe.Sizeof(BITMAPINFOHEADER{}))
+
+	_ = uint(unsafe.Sizeof(BLENDFUNCTION{}) - 4)
+	_ = uint(4 - unsafe.Sizeof(BLENDFUNCTION{}))
 )
 
 // ---------- 辅助函数 ----------

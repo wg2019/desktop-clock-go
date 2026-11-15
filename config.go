@@ -14,16 +14,19 @@ import (
 // Config 对应 exe 同目录的 config.json。
 // json tag 是外部契约，改名等于破坏用户已有配置，测试里锁死了字段名。
 type Config struct {
-	HourFormat   string `json:"hour_format"` // "24" | "12"
-	Color        string `json:"color"`       // "#RRGGBB"
-	FontFamily   string `json:"font_family"` // 字体名
-	FontSize     int    `json:"font_size"`   // 字符高度（像素）
-	FontWeight   string `json:"font_weight"` // "bold" | "normal"
-	Italic       bool   `json:"italic"`      // 斜体
-	X            int    `json:"x"`           // 窗口左上角
-	Y            int    `json:"y"`
-	Autostart    bool   `json:"autostart"`     // 开机自启（实际状态以注册表为准）
-	ClickThrough bool   `json:"click_through"` // 鼠标穿透（锁定）
+	HourFormat string `json:"hour_format"` // "24" | "12"
+	Color      string `json:"color"`       // "#RRGGBB"
+	FontFamily string `json:"font_family"` // 字体名
+	FontSize   int    `json:"font_size"`   // 字符高度（像素）
+	FontWeight string `json:"font_weight"` // "bold" | "normal"
+	Italic     bool   `json:"italic"`      // 斜体
+	// Opacity 是文字的整体不透明度（1-100，100 = 完全不透明）。
+	// 它让时间"沉"进壁纸而不是浮在上面，代价是可读性下降，所以出厂值取 85 而非 100。
+	Opacity      int  `json:"opacity"`
+	X            int  `json:"x"` // 窗口左上角
+	Y            int  `json:"y"`
+	Autostart    bool `json:"autostart"`     // 开机自启（实际状态以注册表为准）
+	ClickThrough bool `json:"click_through"` // 鼠标穿透（锁定）
 	// DesktopLayer: true  = 桌面层，贴在桌面上、永远被应用窗口盖住（默认）
 	//               false = 传统置顶悬浮窗
 	DesktopLayer bool `json:"desktop_layer"`
@@ -38,6 +41,10 @@ const (
 // 所以写在一处，免得改配色时要满文件搜十六进制。
 const defaultColor = "#39FF14"
 
+// defaultOpacity 是出厂不透明度。85% 的取舍：再低文字就开始"发灰"、
+// 深色壁纸上看不清；100% 则完全没有它想要的那种沉入感。
+const defaultOpacity = 85
+
 func defaultConfig() *Config {
 	return &Config{
 		HourFormat:   "24",
@@ -46,12 +53,25 @@ func defaultConfig() *Config {
 		FontSize:     48,
 		FontWeight:   "bold",
 		Italic:       false,
+		Opacity:      defaultOpacity,
 		X:            100,
 		Y:            100,
 		Autostart:    false,
 		ClickThrough: true,
 		DesktopLayer: true,
 	}
+}
+
+// clampOpacity 把配置里的不透明度收进 1-100。
+//
+// 缺这个字段时 json.Unmarshal 不会覆盖默认值，所以"文件里没写"拿到的是 85；
+// 这里管的是"写了但写错"——0 或负数会让文字彻底消失（连自己都看不见，只能改配置），
+// 大于 100 没有意义。两种情况都退回默认值。
+func clampOpacity(v int) int {
+	if v < 1 || v > 100 {
+		return defaultOpacity
+	}
+	return v
 }
 
 // exePath 返回程序真实磁盘路径。

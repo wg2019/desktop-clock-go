@@ -5,6 +5,7 @@
   "font_size": 48,
   "font_weight": "bold",
   "italic": false,
+  "opacity": 85,
   "x": 100,
   "y": 100,
   "autostart": false,

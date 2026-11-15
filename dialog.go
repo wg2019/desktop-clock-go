@@ -16,7 +16,7 @@ func (c *Clock) chooseColor() {
 	if r, _, _ := pChooseColorW.Call(uintptr(unsafe.Pointer(&cc))); r != 0 {
 		c.cfg.Color = colorRefToHex(cc.RgbResult)
 		_ = saveConfig(c.cfg)
-		pInvalidateRect.Call(c.hwnd, 0, 1)
+		c.render()
 	}
 }
 
@@ -70,7 +70,6 @@ func (c *Clock) chooseFont() {
 	c.cfg.Italic = lf.LfItalic != 0
 
 	c.createFont()
-	c.resizeToText()
+	c.resizeToText() // 内部会重画一帧（字号变了缓冲也要重建）
 	_ = saveConfig(c.cfg)
-	pInvalidateRect.Call(c.hwnd, 0, 1)
 }

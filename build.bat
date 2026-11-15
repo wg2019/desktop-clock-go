@@ -15,7 +15,7 @@ set "NOPAUSE="
 if /i "%~1"=="nopause" set "NOPAUSE=1"
 
 REM 版本号只有一处：packaging\version.txt
-set "VERSION=1.0.0"
+set "VERSION=1.1.0"
 if exist "packaging\version.txt" (
     for /f "usebackq delims=" %%V in ("packaging\version.txt") do set "VERSION=%%V"
 )
