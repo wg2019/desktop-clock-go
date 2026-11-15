@@ -79,6 +79,9 @@ var (
 	pAppendMenuW         = user32.NewProc("AppendMenuW")
 	pTrackPopupMenuEx    = user32.NewProc("TrackPopupMenuEx")
 	pDestroyMenu         = user32.NewProc("DestroyMenu")
+	pGetMenuItemCount    = user32.NewProc("GetMenuItemCount")
+	pGetSubMenu          = user32.NewProc("GetSubMenu")
+	pGetMenuState        = user32.NewProc("GetMenuState")
 	pSetForegroundWindow = user32.NewProc("SetForegroundWindow")
 
 	// gdi32
@@ -170,7 +173,9 @@ const (
 	MF_STRING       = 0x0000
 	MF_CHECKED      = 0x0008
 	MF_UNCHECKED    = 0x0000
+	MF_POPUP        = 0x0010 // 该菜单项是子菜单：此时 AppendMenu 的 id 参数传子菜单句柄
 	MF_SEPARATOR    = 0x0800
+	MF_BYPOSITION   = 0x0400 // 配合 GetMenuState：按位置而不是命令 ID 取状态
 	TPM_RIGHTBUTTON = 0x0002
 
 	// 托盘

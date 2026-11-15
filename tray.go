@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"unsafe"
 )
 
@@ -14,6 +15,18 @@ const (
 	idExit            = 106
 	idToggleLayer     = 107
 )
+
+// idOpacityBase 是"不透明度"档位的命令 ID 基址：第 i 档 = idOpacityBase + i。
+//
+// 偏移取索引而不是百分比，档位增删只需要改 opacitySteps，ID 不会和旧值错位。
+// 注意别在 [idOpacityBase, idOpacityBase+len(opacitySteps)) 区间里再定义别的命令。
+const idOpacityBase = 200
+
+// opacitySteps 是右键菜单里可选的不透明度档位（百分比，100 = 完全不透明）。
+//
+// 只给几个整数档而不是滑块：这是"文字往壁纸里沉多少"的观感参数，差 5% 肉眼看不出来，
+// 档位给多了反而让人反复试。85 是出厂值，列在里面方便一键回退。
+var opacitySteps = []int{60, 75, 85, 95, 100}
 
 // ---------- 托盘图标 ----------
 
@@ -104,11 +117,26 @@ func menuFlags(checked bool) uintptr {
 	return MF_STRING | MF_UNCHECKED
 }
 
-func (c *Clock) showTrayMenu() {
+// buildTrayMenu 构建整个右键菜单，返回主菜单句柄。
+//
+// 单独拆出来是为了可测。菜单结构的错（少一项、子菜单挂错位置、勾选状态不对）
+// 运行时只表现成"点了没反应"或"勾错了"，编译期一点提示都没有，只能靠断言兜。
+// 调用方负责 DestroyMenu —— 它是递归的，挂在上面的子菜单会一并销毁。
+func (c *Clock) buildTrayMenu() uintptr {
 	hmenu, _, _ := pCreatePopupMenu.Call()
 
 	appendMenu(hmenu, MF_STRING, idColor, "选择颜色...")
 	appendMenu(hmenu, MF_STRING, idFont, "选择字体...")
+
+	// 不透明度子菜单。标题带上当前实际值：即便这个值不在预设档位里（比如手改
+	// config.json 写成 73），用户也能一眼看到现在是多少，而不是"一个都没勾"。
+	hsub, _, _ := pCreatePopupMenu.Call()
+	for i, v := range opacitySteps {
+		appendMenu(hsub, menuFlags(c.cfg.Opacity == v),
+			idOpacityBase+i, fmt.Sprintf("%d%%", v))
+	}
+	appendMenu(hmenu, MF_POPUP, int(hsub), fmt.Sprintf("不透明度（当前 %d%%）", c.cfg.Opacity))
+
 	appendMenu(hmenu, MF_SEPARATOR, 0, "")
 
 	appendMenu(hmenu, menuFlags(c.cfg.HourFormat == "12"), idToggleFormat, "12 小时制")
@@ -117,6 +145,12 @@ func (c *Clock) showTrayMenu() {
 	appendMenu(hmenu, menuFlags(c.cfg.Autostart), idToggleAutostart, "开机自启动")
 	appendMenu(hmenu, MF_SEPARATOR, 0, "")
 	appendMenu(hmenu, MF_STRING, idExit, "退出")
+
+	return hmenu
+}
+
+func (c *Clock) showTrayMenu() {
+	hmenu := c.buildTrayMenu()
 
 	var pt POINT
 	pGetCursorPos.Call(uintptr(unsafe.Pointer(&pt)))
@@ -127,15 +161,35 @@ func (c *Clock) showTrayMenu() {
 		uintptr(pt.X), uintptr(pt.Y),
 		c.hwnd, 0)
 
+	// DestroyMenu 是递归的：销毁父菜单会一并销毁上面挂的子菜单，不用单独 Destroy
 	pDestroyMenu.Call(hmenu)
 }
 
 // ---------- 命令分发 ----------
 
+// setOpacity 应用新的不透明度：改内存 → 落盘 → 重画一帧。
+//
+// 不需要 resizeToText：不透明度不改变文字尺寸。分层窗口的内容由 render 直接提交，
+// 也不走 WM_PAINT，所以点完菜单立刻就能看到新观感。
+func (c *Clock) setOpacity(v int) {
+	c.cfg.Opacity = clampOpacity(v)
+	_ = saveConfig(c.cfg)
+	c.render()
+}
+
 // onCommand 分发菜单命令。
 // wparam 低 16 位是命令 ID，高 16 位是通知码（菜单项这里恒为 0，忽略）。
 func (c *Clock) onCommand(wparam uintptr) {
-	switch int(wparam & 0xFFFF) {
+	id := int(wparam & 0xFFFF)
+
+	// 不透明度档位按 ID 区间分发：档位由 opacitySteps 决定，在 switch 里逐档写 case
+	// 的话，每次调档位都要改两处，容易漏。
+	if i := id - idOpacityBase; i >= 0 && i < len(opacitySteps) {
+		c.setOpacity(opacitySteps[i])
+		return
+	}
+
+	switch id {
 	case idColor:
 		c.chooseColor()
 	case idFont:
